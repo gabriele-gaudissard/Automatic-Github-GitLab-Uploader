@@ -1,0 +1,8 @@
+/work/
+/bin/
+/obj/
+*.pdb
+*.tmp
+Thumbs.db
+Desktop.ini
+/Github setup.txt
