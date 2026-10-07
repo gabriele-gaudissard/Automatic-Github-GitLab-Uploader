@@ -42,6 +42,8 @@ In the Italian interface, the menus are labeled **Lingua**, **Tipo di caricament
 
 On startup, the app checks `update.json` on the `main` branch of [the official repository](https://github.com/gabriele-gaudissard/Automatic-Github-GitLab-Uploader). The check runs in the background with a four-second deadline; the interface remains usable. If GitHub is unavailable, the file has not been published yet, or there is no newer version, you can continue using the current app.
 
+After the check, the footer shows **Latest version installed** (**Ultima versione installata** in Italian) when no update is installed. This same neutral status is used if the check cannot be completed; the app checks again on the next launch.
+
 When a newer version is available, the app downloads the executable from the same repository and verifies its SHA-256 hash, size, application identity, and version. Downloads have a separate one-minute deadline. The version and update status appear at the bottom of the window.
 
 - If you have not started entering information or uploading a project, the app installs the update and restarts automatically.
@@ -154,7 +156,7 @@ The app does not automatically choose which version to keep when changes conflic
 | Issue | What to do |
 | --- | --- |
 | Git is not found | Install Git for Windows and reopen the app. |
-| The app update check is unavailable | Continue using the app. Check the internet connection; the next launch checks again. The repository must contain a matching executable and `update.json`. |
+| The app still shows Latest version installed | Continue using the app. If you expect a newer version, check the internet connection; the next launch checks again. The repository must contain a matching executable and `update.json` with a higher version number. |
 | An app update could not be installed | Keep the executable in a writable folder and close other running copies of the same executable. Check `result.txt` under `%LOCALAPPDATA%\GithubSetup\updates`. |
 | The folder is not connected to a remote | Use `First upload` first. |
 | A subfolder was selected | Select the root folder shown in the message. |
@@ -179,16 +181,13 @@ Git Repository Uploader/
 ├── update.json
 ├── .gitignore
 ├── assets/
-├── src/
-│   ├── GitUploader.cs
-│   ├── AutoUpdater.cs
-│   ├── AssemblyInfo.cs
-│   ├── UnifiedWindow.cs
-│   ├── WindowsFolderPicker.cs
-│   └── app.manifest
-└── tests/
-    ├── SmokeTests.cs
-    └── UpdateTests.cs
+└── src/
+    ├── GitUploader.cs
+    ├── AutoUpdater.cs
+    ├── AssemblyInfo.cs
+    ├── UnifiedWindow.cs
+    ├── WindowsFolderPicker.cs
+    └── app.manifest
 ```
 
 To rebuild the app, open PowerShell in the project folder:
@@ -197,7 +196,9 @@ To rebuild the app, open PowerShell in the project folder:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-To build the app and run the checks:
+Developer checks are retained only in the complete local working copy, under `tests/`. They are not needed to run or build the app and are excluded from the GitHub distribution and public ZIP. `.gitignore` excludes `tests/` and temporary build/test outputs.
+
+In the complete working copy, you can also run the checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
@@ -208,10 +209,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 Before publishing a code change, build it with a **higher version number**:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Version 1.0.1 -RunTests
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Version 1.0.2
 ```
 
 The build updates `src/AssemblyInfo.cs`, compiles the executable, and generates `update.json` with its exact version, SHA-256 hash, and size. Upload the executable and generated metadata together, along with the shared source and documentation, to the official repository's **main** branch. No separate GitHub Release or user account sign-in is needed for update checks. An upload to a different branch does not distribute an app update.
+
+Use `-RunTests` only in the complete local copy, where the developer test sources are present. It is optional; the public distribution builds without them.
 
 Do not edit the executable or the generated hash by hand. Rebuilding the same version does not trigger an automatic update: increase the version for each public app change. If you maintain a fork, change the repository constants in `src/AutoUpdater.cs` before building so your app checks your own repository.
 

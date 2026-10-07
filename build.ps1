@@ -1,6 +1,14 @@
 param([switch]$RunTests, [string]$Version)
 
 $ErrorActionPreference = 'Stop'
+$testSources = @((Join-Path $PSScriptRoot 'tests\SmokeTests.cs'), (Join-Path $PSScriptRoot 'tests\UpdateTests.cs'))
+if ($RunTests) {
+    foreach ($testSource in $testSources) {
+        if (-not (Test-Path -LiteralPath $testSource)) {
+            throw 'Tests are only included in the complete working copy. Build this distribution without -RunTests.'
+        }
+    }
+}
 $compilerPath = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $compilerPath)) {
     $compilerPath = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
@@ -37,7 +45,7 @@ if ($RunTests) {
     $testDirectory = Join-Path $PSScriptRoot 'work'
     New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
     $testExecutable = Join-Path $testDirectory 'SmokeTests.exe'
-    & $compilerPath @commonArguments '/target:exe' '/main:SmokeTests' ('/out:' + $testExecutable) @sources (Join-Path $PSScriptRoot 'tests\SmokeTests.cs') (Join-Path $PSScriptRoot 'tests\UpdateTests.cs')
+    & $compilerPath @commonArguments '/target:exe' '/main:SmokeTests' ('/out:' + $testExecutable) @sources @testSources
     if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
     $testRunDirectory = Join-Path $testDirectory ('tests-' + [Guid]::NewGuid().ToString('N'))
     & $testExecutable $testRunDirectory

@@ -447,7 +447,7 @@ public sealed class SetupWindow : Form
             : updateState == "downloading" ? T("Downloading the app update…", "Download aggiornamento del programma…")
             : updateState == "ready" ? T("App update ready: it will install when you close this window.", "Aggiornamento pronto: verrà installato alla chiusura della finestra.")
             : updateState == "installing" ? T("Updating and restarting the app…", "Aggiornamento e riavvio del programma…")
-            : updateState == "unavailable" ? T("Update check unavailable; you can keep using the app.", "Controllo aggiornamenti non disponibile; puoi usare il programma.")
+            : updateState == "unavailable" || updateState == "current" ? T("Latest version installed.", "Ultima versione installata.")
             : T("Automatic rebase when needed · Language preference saved", "Rebase automatico se necessario · Preferenza lingua salvata");
         footer.Text = "v" + AutoUpdater.CurrentVersion.ToString(3) + " · " + message;
     }
