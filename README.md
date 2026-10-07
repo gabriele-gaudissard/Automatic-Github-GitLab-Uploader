@@ -14,6 +14,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 - **Automatic rebase** when remote changes need to be integrated.
 - **English and Italian**, with the selected language remembered after closing the app.
 - **Dark interface**, with readable input fields, dropdown menus, and an activity log.
+- **Recent folders** at the top of the Browse window: select any of your last three successfully uploaded projects with one click.
 - Respects **`.gitignore`**, includes file deletions, and preserves local commits when an upload fails.
 
 ## Requirements
@@ -82,6 +83,16 @@ The language preference is stored at:
 %LOCALAPPDATA%\GithubSetup\language.txt
 ```
 
+### Recent uploads
+
+Click **Browse…** to open the folder selection window. Its top section lists your last **three distinct folders with successful uploads**, newest first. Click a recent folder to select it immediately, or use the folder tree and **Select folder** to choose another project. You can also type a folder path.
+
+![Recent uploaded folders in the folder picker](assets/recent-folders.png)
+
+The list is remembered after closing the app. Uploading the same folder again moves it to the top. Failed uploads do not add folders to the list, and folders that no longer exist are hidden. Hover over a recent entry to see its full path.
+
+Recent paths are stored only on your computer at `%LOCALAPPDATA%\GithubSetup\recent-folders.txt`. This history is not included in the app's distribution or GitHub upload package.
+
 ## Rebase and conflicts
 
 Before pushing, the app fetches changes from the remote branch. If those changes are not already in the local history, it runs a rebase.
@@ -135,7 +146,7 @@ To build the app and run the checks:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 ```
 
-The checks use local test repositories without publishing files to GitHub or GitLab. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, URL validation, and saved language preferences. Test folders are created under `work/`, which is excluded from version control.
+The checks use local test repositories without publishing files to GitHub or GitLab. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, URL validation, saved language preferences, and recent-folder persistence and selection. Test folders are created under `work/`, which is excluded from version control.
 
 ## Scope of this version
 

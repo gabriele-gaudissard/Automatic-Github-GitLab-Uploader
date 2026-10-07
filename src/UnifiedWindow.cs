@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -16,9 +17,11 @@ public static class UiText
 public sealed class AppSettings
 {
     readonly string file;
+    readonly string recentFile;
     public AppSettings(string settingsFile = null)
     {
         file = settingsFile ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GithubSetup", "language.txt");
+        recentFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file)), "recent-folders.txt");
     }
     public string LoadLanguage()
     {
@@ -29,15 +32,194 @@ public sealed class AppSettings
     public void SaveLanguage(string code)
     {
         if (code != "en" && code != "it") throw new ArgumentException("Unsupported language");
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file)));
-        string temporary = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        SaveText(file, code);
+    }
+    public string[] LoadRecentFolders()
+    {
+        var folders = new List<string>();
         try
         {
-            File.WriteAllText(temporary, code, Encoding.UTF8);
-            if (File.Exists(file)) File.Replace(temporary, file, null);
-            else File.Move(temporary, file);
+            foreach (string line in File.ReadAllLines(recentFile, Encoding.UTF8))
+            {
+                try
+                {
+                    if (String.IsNullOrWhiteSpace(line) || !Path.IsPathRooted(line)) continue;
+                    string path = Path.GetFullPath(line);
+                    if (Directory.Exists(path) && !folders.Exists(delegate(string existing) { return SameFolder(existing, path); })) folders.Add(path);
+                    if (folders.Count == 3) break;
+                }
+                catch (ArgumentException) { }
+                catch (NotSupportedException) { }
+                catch (IOException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return folders.ToArray();
+    }
+    public void RememberUploadedFolder(string folder)
+    {
+        string path = Path.GetFullPath(folder);
+        if (!Directory.Exists(path)) throw new DirectoryNotFoundException(path);
+        var recent = new List<string> { path };
+        foreach (string existing in LoadRecentFolders())
+        {
+            if (!SameFolder(existing, path)) recent.Add(existing);
+            if (recent.Count == 3) break;
+        }
+        SaveText(recentFile, String.Join(Environment.NewLine, recent.ToArray()));
+    }
+    static bool SameFolder(string first, string second)
+    {
+        return String.Equals(first.TrimEnd('\\', '/'), second.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+    }
+    static void SaveText(string path, string contents)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, contents, Encoding.UTF8);
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+}
+
+public sealed class RecentFolderPicker : Form
+{
+    readonly TextBox path = new TextBox();
+    readonly TreeView tree = new TreeView();
+    readonly ToolTip tips = new ToolTip();
+    public string SelectedPath { get; private set; }
+    static string T(string en, string it) { return UiText.Get(en, it); }
+
+    public RecentFolderPicker(string initialFolder, string[] recentFolders)
+    {
+        Text = T("Select project folder", "Seleziona cartella progetto");
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(650, 590);
+        MinimumSize = new Size(550, 520);
+        Font = new Font("Segoe UI", 10F);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 6 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, recentFolders.Length == 0 ? 32 : Math.Min(3, recentFolders.Length) * 38));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        Controls.Add(layout);
+        layout.Controls.Add(new Label { Text = T("Recent uploads", "Caricamenti recenti"), Dock = DockStyle.Fill, Font = new Font("Segoe UI", 13F, FontStyle.Bold) }, 0, 0);
+        var recentPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1 };
+        layout.Controls.Add(recentPanel, 0, 1);
+        if (recentFolders.Length == 0)
+            recentPanel.Controls.Add(new Label { Text = T("No recent uploads yet.", "Nessun caricamento recente."), Dock = DockStyle.Fill });
+        for (int index = 0; index < Math.Min(3, recentFolders.Length); index++)
+        {
+            string recent = recentFolders[index];
+            string display = Path.GetFileName(recent.TrimEnd('\\', '/'));
+            if (display.Length == 0) display = recent;
+            var button = new Button { Name = "RecentFolder" + index, Text = (index + 1) + ".  " + display, Tag = recent, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = new Padding(0, 0, 0, 5) };
+            recentPanel.RowCount = index + 1;
+            recentPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+            recentPanel.Controls.Add(button, 0, index);
+            tips.SetToolTip(button, recent);
+            button.Click += delegate { path.Text = recent; ChooseFolder(); };
+        }
+        layout.Controls.Add(new Label { Text = T("Or choose another folder", "Oppure scegli un'altra cartella"), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 2);
+        tree.Dock = DockStyle.Fill;
+        tree.HideSelection = false;
+        tree.BeforeExpand += delegate(object sender, TreeViewCancelEventArgs e) { LoadChildren(e.Node); };
+        tree.AfterSelect += delegate(object sender, TreeViewEventArgs e) { path.Text = (string)e.Node.Tag; };
+        foreach (DriveInfo drive in DriveInfo.GetDrives()) tree.Nodes.Add(FolderNode(drive.Name));
+        layout.Controls.Add(tree, 0, 3);
+        path.Dock = DockStyle.Fill;
+        path.Margin = new Padding(0, 8, 0, 5);
+        if (Directory.Exists(initialFolder)) path.Text = Path.GetFullPath(initialFolder);
+        layout.Controls.Add(path, 0, 4);
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        var choose = new Button { Name = "ChooseFolder", Text = T("Select folder", "Seleziona cartella"), Width = 160, Height = 34 };
+        var cancel = new Button { Text = T("Cancel", "Annulla"), Width = 110, Height = 34, DialogResult = DialogResult.Cancel };
+        choose.Click += delegate { ChooseFolder(); };
+        actions.Controls.Add(choose);
+        actions.Controls.Add(cancel);
+        layout.Controls.Add(actions, 0, 5);
+        AcceptButton = choose;
+        CancelButton = cancel;
+        SetupWindow.ApplyDarkTheme(this);
+        Shown += delegate { RevealInitialFolder(); };
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        SetupWindow.UseDarkTitleBar(Handle);
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) tips.Dispose();
+        base.Dispose(disposing);
+    }
+    static TreeNode FolderNode(string folder)
+    {
+        string name = Path.GetFileName(folder.TrimEnd('\\', '/'));
+        var node = new TreeNode(name.Length == 0 ? folder : name) { Tag = folder };
+        node.Nodes.Add(new TreeNode());
+        return node;
+    }
+    static void LoadChildren(TreeNode node)
+    {
+        if (node.Nodes.Count != 1 || node.Nodes[0].Tag != null) return;
+        node.Nodes.Clear();
+        try
+        {
+            string[] children = Directory.GetDirectories((string)node.Tag);
+            Array.Sort(children, StringComparer.CurrentCultureIgnoreCase);
+            foreach (string child in children) node.Nodes.Add(FolderNode(child));
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+    void RevealInitialFolder()
+    {
+        string initial = path.Text;
+        if (!Directory.Exists(initial)) return;
+        string root = Path.GetPathRoot(initial);
+        TreeNode node = null;
+        foreach (TreeNode candidate in tree.Nodes)
+            if (String.Equals((string)candidate.Tag, root, StringComparison.OrdinalIgnoreCase)) node = candidate;
+        if (node == null) { node = FolderNode(root); tree.Nodes.Add(node); }
+        string remainder = initial.Substring(root.Length).Trim('\\', '/');
+        foreach (string part in remainder.Split(new [] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            LoadChildren(node);
+            node.Expand();
+            TreeNode next = null;
+            foreach (TreeNode child in node.Nodes)
+                if (String.Equals(child.Text, part, StringComparison.OrdinalIgnoreCase)) { next = child; break; }
+            if (next == null) break;
+            node = next;
+        }
+        tree.SelectedNode = node;
+        node.EnsureVisible();
+        path.Text = initial;
+    }
+    void ChooseFolder()
+    {
+        try
+        {
+            string selected = Path.GetFullPath(path.Text.Trim().Trim('"'));
+            if (String.IsNullOrWhiteSpace(path.Text) || !Directory.Exists(selected)) throw new DirectoryNotFoundException();
+            SelectedPath = selected;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            if (!(ex is ArgumentException) && !(ex is IOException) && !(ex is NotSupportedException) && !(ex is UnauthorizedAccessException)) throw;
+            MessageBox.Show(this, T("Select an existing folder.", "Seleziona una cartella esistente."), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 }
 
@@ -169,9 +351,8 @@ public sealed class SetupWindow : Form
         browse.Dock = DockStyle.Fill;
         browse.Margin = new Padding(8, 0, 0, 0);
         browse.Click += delegate {
-            using (var dialog = new FolderBrowserDialog { Description = T("Select the project folder", "Seleziona la cartella del progetto"), ShowNewFolderButton = false })
+            using (var dialog = new RecentFolderPicker(folder.Text, settings.LoadRecentFolders()))
             {
-                if (Directory.Exists(folder.Text)) dialog.SelectedPath = folder.Text;
                 if (dialog.ShowDialog(this) == DialogResult.OK) folder.Text = dialog.SelectedPath;
             }
         };
@@ -252,17 +433,23 @@ public sealed class SetupWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int enabled = 1;
-        if (DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int)) != 0)
-            DwmSetWindowAttribute(Handle, 19, ref enabled, sizeof(int));
+        UseDarkTitleBar(Handle);
     }
 
-    static void ApplyDarkTheme(Control control)
+    public static void UseDarkTitleBar(IntPtr handle)
+    {
+        int enabled = 1;
+        if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
+            DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
+    }
+
+    public static void ApplyDarkTheme(Control control)
     {
         control.ForeColor = LightText;
         var text = control as TextBox;
         var combo = control as ComboBox;
         var button = control as Button;
+        var tree = control as TreeView;
         if (text != null)
         {
             text.BackColor = DarkSurface;
@@ -284,6 +471,13 @@ public sealed class SetupWindow : Form
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             };
             combo.HandleCreated += delegate { SetWindowTheme(combo.Handle, "DarkMode_Explorer", null); };
+        }
+        else if (tree != null)
+        {
+            tree.BackColor = DarkSurface;
+            tree.LineColor = DarkBorder;
+            tree.BorderStyle = BorderStyle.FixedSingle;
+            tree.HandleCreated += delegate { SetWindowTheme(tree.Handle, "DarkMode_Explorer", null); };
         }
         else if (button != null)
         {
@@ -396,6 +590,10 @@ public sealed class SetupWindow : Form
                 if (first) uploader.First(selected, user, mail, url, commit);
                 else uploader.Update(selected, commit);
             });
+            try { settings.RememberUploadedFolder(selected); }
+            catch (Exception ex) {
+                Log(T("Upload succeeded, but recent folders could not be saved: ", "Caricamento riuscito, ma non è stato possibile salvare le cartelle recenti: ") + ex.Message);
+            }
             status.ForeColor = SuccessText;
             state = "done";
             RefreshStatus();

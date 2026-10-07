@@ -110,6 +110,7 @@ static class SmokeTests
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        TestRecentFolders(root);
         string persistenceFile = Path.Combine(root, "preferences", "language.txt");
         var preferences = new AppSettings(persistenceFile);
         Assert(preferences.LoadLanguage() == "en", "Inglese predefinito senza preferenze salvate");
@@ -168,5 +169,60 @@ static class SmokeTests
         try { GitUploader.ValidateUrl("invalid"); }
         catch (InvalidOperationException ex) { Assert(ex.Message.StartsWith("Inserisci"), "Errori del caricamento in italiano"); }
         UiText.Code = "en";
+    }
+    static void TestRecentFolders(string root)
+    {
+        var settings = new AppSettings(Path.Combine(root, "history", "language.txt"));
+        Assert(settings.LoadRecentFolders().Length == 0, "Cronologia inizialmente vuota");
+        var projects = new string[4];
+        string[] names = { "First Project", "Website", "Tools", "Example Project" };
+        for (int index = 0; index < projects.Length; index++)
+        {
+            projects[index] = Path.Combine(root, "demo-projects", names[index]);
+            Directory.CreateDirectory(projects[index]);
+            settings.RememberUploadedFolder(projects[index]);
+        }
+        string[] recent = new AppSettings(Path.Combine(root, "history", "language.txt")).LoadRecentFolders();
+        Assert(recent.Length == 3 && recent[0] == projects[3] && recent[1] == projects[2] && recent[2] == projects[1], "Ultimi tre caricamenti persistenti, dal piu recente");
+        settings.RememberUploadedFolder(projects[1]);
+        recent = settings.LoadRecentFolders();
+        Assert(recent.Length == 3 && recent[0] == projects[1] && recent[1] == projects[3] && recent[2] == projects[2], "Cartella gia usata spostata in cima senza duplicati");
+        settings.RememberUploadedFolder(projects[1].ToUpperInvariant() + Path.DirectorySeparatorChar);
+        Assert(settings.LoadRecentFolders().Length == 3, "Nessun duplicato con maiuscole e slash finale");
+        RejectMissingRecentFolder(settings, Path.Combine(root, "does-not-exist"));
+        File.AppendAllText(Path.Combine(root, "history", "recent-folders.txt"), Environment.NewLine + "relative-path" + Environment.NewLine + "invalid\0path");
+        Assert(settings.LoadRecentFolders().Length == 3, "Cronologia corrotta gestita senza errore");
+        UiText.Code = "en";
+        using (var picker = new RecentFolderPicker("", settings.LoadRecentFolders()))
+        {
+            picker.StartPosition = FormStartPosition.Manual;
+            picker.Location = new Point(-32000, -32000);
+            picker.ShowInTaskbar = false;
+            picker.Show();
+            Application.DoEvents();
+            using (var image = new Bitmap(picker.Width, picker.Height))
+            {
+                picker.DrawToBitmap(image, new Rectangle(Point.Empty, picker.Size));
+                image.Save(Path.Combine(root, "recent-folders.png"));
+            }
+            var first = (Button)picker.Controls.Find("RecentFolder0", true)[0];
+            first.PerformClick();
+            Assert(picker.DialogResult == DialogResult.OK && String.Equals(picker.SelectedPath.TrimEnd('\\'), projects[1], StringComparison.OrdinalIgnoreCase), "Selezione recente con un clic");
+        }
+        using (var cancelled = new RecentFolderPicker("", settings.LoadRecentFolders()))
+        {
+            cancelled.DialogResult = DialogResult.Cancel;
+            Assert(cancelled.SelectedPath == null, "Annullamento senza cambiare cartella");
+        }
+        // Simulate a stale history entry without deleting any project directory.
+        File.WriteAllText(Path.Combine(root, "history", "recent-folders.txt"), Path.Combine(root, "missing-project") + Environment.NewLine + projects[3]);
+        recent = settings.LoadRecentFolders();
+        Assert(recent.Length == 1 && recent[0] == projects[3], "Cartelle non piu esistenti escluse dai recenti");
+    }
+    static void RejectMissingRecentFolder(AppSettings settings, string path)
+    {
+        bool failed = false;
+        try { settings.RememberUploadedFolder(path); } catch (DirectoryNotFoundException) { failed = true; }
+        Assert(failed && settings.LoadRecentFolders().Length == 3, "Percorso inesistente non altera la cronologia");
     }
 }
