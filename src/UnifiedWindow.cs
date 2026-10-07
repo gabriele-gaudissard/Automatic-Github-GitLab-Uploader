@@ -207,6 +207,10 @@ public sealed class SetupWindow : Form
     string firstMessage;
     string updateMessage = "";
     string state = "ready";
+    readonly System.Threading.CancellationTokenSource updateCancellation = new System.Threading.CancellationTokenSource();
+    PendingUpdate pendingUpdate;
+    bool updaterStarted;
+    string updateState = "idle";
 
     public ComboBox UploadType { get { return mode; } }
     public ComboBox LanguageSelector { get { return language; } }
@@ -219,7 +223,7 @@ public sealed class SetupWindow : Form
     public bool FirstFieldsVisible { get { return fields.RowStyles[1].Height > 0; } }
     static string T(string en, string it) { return UiText.Get(en, it); }
 
-    public SetupWindow(AppSettings appSettings = null)
+    public SetupWindow(AppSettings appSettings = null, bool automaticUpdates = false)
     {
         settings = appSettings ?? new AppSettings();
         UiText.Code = settings.LoadLanguage();
@@ -387,7 +391,65 @@ public sealed class SetupWindow : Form
                 e.Cancel = true;
                 MessageBox.Show(this, T("Wait for the upload to finish. Complete or cancel any open sign-in request.", "Attendi la fine del caricamento. Completa o annulla eventuali richieste di accesso aperte."), T("Upload in progress", "Caricamento in corso"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
+            else {
+                updateCancellation.Cancel();
+                if (pendingUpdate != null && !updaterStarted) {
+                    try { AutoUpdater.StartApply(pendingUpdate, false); updaterStarted = true; }
+                    catch (Exception ex) { Log(T("The app update could not be installed: ", "Non è stato possibile installare l'aggiornamento: ") + ex.Message); }
+                }
+            }
         };
+        if (automaticUpdates) Shown += async delegate { await CheckForAppUpdate(); };
+    }
+
+    bool HasWorkInForm()
+    {
+        return folder.TextLength > 0 || email.TextLength > 0 || username.TextLength > 0 || repo.TextLength > 0 ||
+            giteaPort.TextLength > 0 || firstBranchChoice != "main" || updateBranchChoice.Length > 0 ||
+            firstMessage != T("Initial upload", "Primo caricamento") || updateMessage.Length > 0 ||
+            message.Text != (activeMode == 0 ? T("Initial upload", "Primo caricamento") : "");
+    }
+
+    async Task CheckForAppUpdate()
+    {
+        updateState = "checking";
+        RefreshFooter();
+        try {
+            PendingUpdate update = await AutoUpdater.StageAsync(delegate(string state) {
+                if (!IsDisposed && IsHandleCreated) BeginInvoke(new Action(delegate { updateState = state; RefreshFooter(); }));
+            }, updateCancellation.Token);
+            if (IsDisposed || updateCancellation.IsCancellationRequested) return;
+            pendingUpdate = update;
+            if (update == null) { updateState = "current"; RefreshFooter(); return; }
+            if (busy || HasWorkInForm()) {
+                updateState = "ready";
+                RefreshFooter();
+                return;
+            }
+            updateState = "installing";
+            RefreshFooter();
+            AutoUpdater.StartApply(update, true);
+            updaterStarted = true;
+            Close();
+        }
+        catch (Exception) {
+            if (!IsDisposed && !updateCancellation.IsCancellationRequested) {
+                pendingUpdate = null;
+                updateState = "unavailable";
+                RefreshFooter();
+            }
+        }
+    }
+
+    void RefreshFooter()
+    {
+        string message = updateState == "checking" ? T("Checking for updates…", "Controllo aggiornamenti…")
+            : updateState == "downloading" ? T("Downloading the app update…", "Download aggiornamento del programma…")
+            : updateState == "ready" ? T("App update ready: it will install when you close this window.", "Aggiornamento pronto: verrà installato alla chiusura della finestra.")
+            : updateState == "installing" ? T("Updating and restarting the app…", "Aggiornamento e riavvio del programma…")
+            : updateState == "unavailable" ? T("Update check unavailable; you can keep using the app.", "Controllo aggiornamenti non disponibile; puoi usare il programma.")
+            : T("Automatic rebase when needed · Language preference saved", "Rebase automatico se necessario · Preferenza lingua salvata");
+        footer.Text = "v" + AutoUpdater.CurrentVersion.ToString(3) + " · " + message;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -552,7 +614,7 @@ public sealed class SetupWindow : Form
         RefreshPortVisibility();
         browse.Text = T("Browse…", "Sfoglia…");
         upload.Text = first ? T("Upload to ", "Carica su ") + service : T("Upload changes", "Carica aggiornamenti");
-        footer.Text = T("Automatic rebase when needed · Language preference saved", "Rebase automatico se necessario · Preferenza lingua salvata");
+        RefreshFooter();
         RefreshStatus();
         ResumeLayout(true);
         refreshing = false;
@@ -634,11 +696,13 @@ public sealed class SetupWindow : Form
 static class Program
 {
     [STAThread]
-    static void Main()
+    static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--apply-update") return AutoUpdater.Apply(args[1]);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new SetupWindow());
+        Application.Run(new SetupWindow(null, !(args.Length == 1 && args[0] == "--skip-update")));
+        return 0;
     }
 }
 

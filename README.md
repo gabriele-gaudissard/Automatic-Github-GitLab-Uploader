@@ -9,6 +9,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 ## Features
 
 - **First upload:** initialize the repository, configure the commit author, connect to the service, commit, and push.
+- **Automatic app updates:** quickly check GitHub at startup, download verified newer versions in the background, and install them automatically.
 - **Subsequent uploads:** select a folder and enter a commit message; the app uses the existing remote connection.
 - **Editable branch field:** choose `main`, the repository's default branch, or an existing branch from the suggestions, or type your own name. Existing branches are reused; missing branches are created.
 - **GitHub, GitLab.com, and Gitea**, including GitLab subgroups and Gitea instances on custom HTTPS domains and ports.
@@ -26,7 +27,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 - An account on the selected service and an existing repository with write permission.
 - An internet connection for synchronization and uploads.
 
-The executable requires no app installation, Python, or Node.js.
+The executable requires no app installation, Python, or Node.js. Keep it in a folder you can write to so automatic updates can replace it.
 
 ## Quick start
 
@@ -36,6 +37,19 @@ The executable requires no app installation, Python, or Node.js.
 4. Fill in the fields and click the upload button.
 
 In the Italian interface, the menus are labeled **Lingua**, **Tipo di caricamento**, and **Piattaforma**.
+
+### Automatic app updates
+
+On startup, the app checks `update.json` on the `main` branch of [the official repository](https://github.com/gabriele-gaudissard/Automatic-Github-GitLab-Uploader). The check runs in the background with a four-second deadline; the interface remains usable. If GitHub is unavailable, the file has not been published yet, or there is no newer version, you can continue using the current app.
+
+When a newer version is available, the app downloads the executable from the same repository and verifies its SHA-256 hash, size, application identity, and version. Downloads have a separate one-minute deadline. The version and update status appear at the bottom of the window.
+
+- If you have not started entering information or uploading a project, the app installs the update and restarts automatically.
+- If you are filling in the fields or uploading, the update waits until you close the app. It then installs automatically, ready for your next launch. An active upload is never interrupted for an app update.
+- Only this copy's executable is replaced. Language, recent folders, credentials managed by Git, your projects, personal files, and existing `.git` folders are preserved. Sources, documentation, and build files are available in the full distribution; the automatic runtime update only needs the executable.
+- The previous executable is kept in `%LOCALAPPDATA%\GithubSetup\updates\<update-id>\previous.exe`. If installation or restarting fails, the updater attempts to restore it and leaves a `result.txt` diagnostic in that folder.
+
+This works in both the complete folder and the public distribution, and also when someone downloads just the executable. Versions released before automatic updates were added need to be replaced manually once. Each installed copy checks and updates independently when opened.
 
 ### First upload
 
@@ -140,6 +154,8 @@ The app does not automatically choose which version to keep when changes conflic
 | Issue | What to do |
 | --- | --- |
 | Git is not found | Install Git for Windows and reopen the app. |
+| The app update check is unavailable | Continue using the app. Check the internet connection; the next launch checks again. The repository must contain a matching executable and `update.json`. |
+| An app update could not be installed | Keep the executable in a writable folder and close other running copies of the same executable. Check `result.txt` under `%LOCALAPPDATA%\GithubSetup\updates`. |
 | The folder is not connected to a remote | Use `First upload` first. |
 | A subfolder was selected | Select the root folder shown in the message. |
 | Access is denied | Check your account and repository permissions, then complete sign-in. For Gitea, check that the access token can write to the repository. |
@@ -160,15 +176,19 @@ Git Repository Uploader/
 ├── Git Repository Uploader.exe
 ├── README.md
 ├── build.ps1
+├── update.json
 ├── .gitignore
 ├── assets/
 ├── src/
 │   ├── GitUploader.cs
+│   ├── AutoUpdater.cs
+│   ├── AssemblyInfo.cs
 │   ├── UnifiedWindow.cs
 │   ├── WindowsFolderPicker.cs
 │   └── app.manifest
 └── tests/
-    └── SmokeTests.cs
+    ├── SmokeTests.cs
+    └── UpdateTests.cs
 ```
 
 To rebuild the app, open PowerShell in the project folder:
@@ -183,7 +203,19 @@ To build the app and run the checks:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 ```
 
-The checks use local test repositories without publishing files to hosted services. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, freely named new and existing branches, remote-only branches, default-branch discovery, editable branch suggestions, safe branch switching, retry after a failed push, Gitea port overrides for first and subsequent uploads, URL validation for all three platforms, both interface languages, saved language preferences, and recent-folder persistence and selection. Live authentication and server-specific policies require an account on the chosen service. Test folders are created under `work/`, which is excluded from version control.
+### Publishing an app update
+
+Before publishing a code change, build it with a **higher version number**:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Version 1.0.1 -RunTests
+```
+
+The build updates `src/AssemblyInfo.cs`, compiles the executable, and generates `update.json` with its exact version, SHA-256 hash, and size. Upload the executable and generated metadata together, along with the shared source and documentation, to the official repository's **main** branch. No separate GitHub Release or user account sign-in is needed for update checks. An upload to a different branch does not distribute an app update.
+
+Do not edit the executable or the generated hash by hand. Rebuilding the same version does not trigger an automatic update: increase the version for each public app change. If you maintain a fork, change the repository constants in `src/AutoUpdater.cs` before building so your app checks your own repository.
+
+The checks use local test repositories without publishing files to hosted services. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, freely named branches, default-branch discovery, editable suggestions, safe branch switching, retry after failed pushes, Gitea ports, both interface languages, and saved preferences and recent folders. App-update tests simulate GitHub responses and run a real updater helper against temporary executables, checking version comparison, integrity verification, cancellation, offline behavior, backup creation, and preservation of personal files and Git metadata. Live authentication and server-specific policies require an account on the chosen service. Test folders are created under `work/`, which is excluded from version control.
 
 ## Scope of this version
 

@@ -125,6 +125,7 @@ static class SmokeTests
             Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/team/repo", "Gitea", port); }, "Rifiuto porta non valida: " + port);
         Assert(GitUploader.ValidateUrl("https://git.example.com/team/repo", "Gitea", "65535").Contains(":65535/"), "Porta massima valida");
         TestBranchUploads(root);
+        UpdateTests.Run(root);
         RenderUI(root);
         Console.WriteLine("TUTTE LE PROVE SUPERATE");
     }
