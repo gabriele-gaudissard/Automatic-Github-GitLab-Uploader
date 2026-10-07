@@ -13,6 +13,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 - **GitHub and GitLab.com**, including GitLab groups and subgroups.
 - **Automatic rebase** when remote changes need to be integrated.
 - **English and Italian**, with the selected language remembered after closing the app.
+- **Dark interface**, with readable input fields, dropdown menus, and an activity log.
 - Respects **`.gitignore`**, includes file deletions, and preserves local commits when an upload fails.
 
 ## Requirements

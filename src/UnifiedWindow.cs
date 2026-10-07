@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -40,12 +41,46 @@ public sealed class AppSettings
     }
 }
 
+public sealed class DarkComboBox : ComboBox
+{
+    protected override void WndProc(ref Message message)
+    {
+        base.WndProc(ref message);
+        bool printing = message.Msg == 0x0317 || message.Msg == 0x0318;
+        if (!IsHandleCreated || (message.Msg != 0x000F && !printing)) return;
+        using (Graphics graphics = printing && message.WParam != IntPtr.Zero ? Graphics.FromHdc(message.WParam) : Graphics.FromHwnd(Handle))
+        {
+            int arrowWidth = SystemInformation.VerticalScrollBarWidth + 4;
+            int centerX = Width - arrowWidth / 2;
+            int centerY = Height / 2;
+            using (var surface = new SolidBrush(Color.FromArgb(28, 34, 44)))
+                graphics.FillRectangle(surface, Width - arrowWidth, 1, arrowWidth - 1, Height - 2);
+            using (var border = new Pen(Color.FromArgb(58, 70, 89)))
+                graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
+            using (var arrow = new SolidBrush(Enabled ? Color.FromArgb(169, 182, 203) : Color.FromArgb(95, 105, 120)))
+                graphics.FillPolygon(arrow, new [] { new Point(centerX - 4, centerY - 2), new Point(centerX + 4, centerY - 2), new Point(centerX, centerY + 2) });
+        }
+    }
+}
+
 public sealed class SetupWindow : Form
 {
+    static readonly Color DarkBackground = Color.FromArgb(18, 22, 29);
+    static readonly Color DarkSurface = Color.FromArgb(28, 34, 44);
+    static readonly Color DarkBorder = Color.FromArgb(58, 70, 89);
+    static readonly Color LightText = Color.FromArgb(232, 237, 245);
+    static readonly Color MutedText = Color.FromArgb(169, 182, 203);
+    static readonly Color Accent = Color.FromArgb(47, 103, 218);
+    static readonly Color SuccessText = Color.FromArgb(119, 221, 157);
+    static readonly Color ErrorText = Color.FromArgb(255, 133, 143);
+    [DllImport("dwmapi.dll")]
+    static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    static extern int SetWindowTheme(IntPtr window, string application, string subIdList);
     readonly AppSettings settings;
-    readonly ComboBox mode = new ComboBox();
-    readonly ComboBox language = new ComboBox();
-    readonly ComboBox platform = new ComboBox();
+    readonly ComboBox mode = new DarkComboBox();
+    readonly ComboBox language = new DarkComboBox();
+    readonly ComboBox platform = new DarkComboBox();
     readonly TextBox folder = new TextBox();
     readonly TextBox email = new TextBox();
     readonly TextBox username = new TextBox();
@@ -87,7 +122,8 @@ public sealed class SetupWindow : Form
         ClientSize = new Size(820, 720);
         MinimumSize = new Size(790, 710);
         Font = new Font("Segoe UI", 10F);
-        BackColor = Color.FromArgb(247, 249, 252);
+        BackColor = DarkBackground;
+        ForeColor = LightText;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
         foreach (int height in new [] { 45, 52, 60 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -98,7 +134,7 @@ public sealed class SetupWindow : Form
         Controls.Add(layout);
         heading.Dock = DockStyle.Fill;
         heading.Font = new Font("Segoe UI", 19F, FontStyle.Bold);
-        heading.ForeColor = Color.FromArgb(28, 40, 61);
+        heading.ForeColor = LightText;
         layout.Controls.Add(heading, 0, 0);
         selectors.Dock = DockStyle.Fill;
         selectors.ColumnCount = 4;
@@ -152,7 +188,7 @@ public sealed class SetupWindow : Form
         AddField(5, message);
         message.Text = firstMessage;
         layout.Controls.Add(fields, 0, 3);
-        upload.BackColor = Color.FromArgb(32, 102, 204);
+        upload.BackColor = Accent;
         upload.ForeColor = Color.White;
         upload.FlatStyle = FlatStyle.Flat;
         upload.FlatAppearance.BorderSize = 0;
@@ -168,13 +204,20 @@ public sealed class SetupWindow : Form
         output.ScrollBars = ScrollBars.Both;
         output.WordWrap = false;
         output.Dock = DockStyle.Fill;
-        output.BackColor = Color.White;
+        output.BackColor = DarkSurface;
         output.Font = new Font("Consolas", 9F);
         layout.Controls.Add(output, 0, 6);
         footer.Dock = DockStyle.Fill;
         footer.TextAlign = ContentAlignment.MiddleLeft;
-        footer.ForeColor = Color.FromArgb(90, 102, 120);
+        footer.ForeColor = MutedText;
         layout.Controls.Add(footer, 0, 7);
+        ApplyDarkTheme(this);
+        upload.BackColor = Accent;
+        upload.ForeColor = Color.White;
+        upload.FlatAppearance.BorderSize = 0;
+        upload.FlatAppearance.MouseOverBackColor = Color.FromArgb(61, 119, 238);
+        upload.FlatAppearance.MouseDownBackColor = Color.FromArgb(36, 82, 183);
+        note.ForeColor = footer.ForeColor = status.ForeColor = MutedText;
         RefreshText();
         platform.SelectedIndexChanged += delegate { if (!refreshing) RefreshText(); };
         mode.SelectedIndexChanged += delegate {
@@ -204,6 +247,57 @@ public sealed class SetupWindow : Form
                 MessageBox.Show(this, T("Wait for the upload to finish. Complete or cancel any open sign-in request.", "Attendi la fine del caricamento. Completa o annulla eventuali richieste di accesso aperte."), T("Upload in progress", "Caricamento in corso"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         };
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        int enabled = 1;
+        if (DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int)) != 0)
+            DwmSetWindowAttribute(Handle, 19, ref enabled, sizeof(int));
+    }
+
+    static void ApplyDarkTheme(Control control)
+    {
+        control.ForeColor = LightText;
+        var text = control as TextBox;
+        var combo = control as ComboBox;
+        var button = control as Button;
+        if (text != null)
+        {
+            text.BackColor = DarkSurface;
+            text.BorderStyle = BorderStyle.FixedSingle;
+            text.HandleCreated += delegate { SetWindowTheme(text.Handle, "DarkMode_Explorer", null); };
+        }
+        else if (combo != null)
+        {
+            combo.BackColor = DarkSurface;
+            combo.FlatStyle = FlatStyle.Flat;
+            combo.DrawMode = DrawMode.OwnerDrawFixed;
+            combo.DrawItem += delegate(object sender, DrawItemEventArgs e) {
+                if (e.Index < 0) return;
+                bool selected = (e.State & DrawItemState.Selected) != 0 && (e.State & DrawItemState.ComboBoxEdit) == 0;
+                Color background = selected ? Accent : DarkSurface;
+                using (var brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+                var bounds = new Rectangle(e.Bounds.X + 5, e.Bounds.Y, Math.Max(0, e.Bounds.Width - 10), e.Bounds.Height);
+                TextRenderer.DrawText(e.Graphics, combo.Items[e.Index].ToString(), e.Font, bounds, LightText,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            };
+            combo.HandleCreated += delegate { SetWindowTheme(combo.Handle, "DarkMode_Explorer", null); };
+        }
+        else if (button != null)
+        {
+            button.UseVisualStyleBackColor = false;
+            button.BackColor = DarkSurface;
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderColor = DarkBorder;
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(39, 48, 62);
+            button.FlatAppearance.MouseDownBackColor = DarkBorder;
+            button.Cursor = Cursors.Hand;
+        }
+        else if (control is Label) control.BackColor = Color.Transparent;
+        else control.BackColor = DarkBackground;
+        foreach (Control child in control.Controls) ApplyDarkTheme(child);
     }
 
     void AddField(int row, Control control)
@@ -293,7 +387,7 @@ public sealed class SetupWindow : Form
             busy = true;
             fields.Enabled = selectors.Enabled = upload.Enabled = false;
             output.Clear();
-            status.ForeColor = Color.FromArgb(28, 40, 61);
+            status.ForeColor = MutedText;
             state = "busy";
             RefreshStatus();
             Log(T("Folder: ", "Cartella: ") + selected);
@@ -302,14 +396,14 @@ public sealed class SetupWindow : Form
                 if (first) uploader.First(selected, user, mail, url, commit);
                 else uploader.Update(selected, commit);
             });
-            status.ForeColor = Color.FromArgb(22, 125, 65);
+            status.ForeColor = SuccessText;
             state = "done";
             RefreshStatus();
             MessageBox.Show(this, T("Repository upload completed.", "Caricamento del repository completato."), "Git Repository Uploader", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            status.ForeColor = Color.FromArgb(175, 35, 35);
+            status.ForeColor = ErrorText;
             state = "error";
             RefreshStatus();
             Log(T("ERROR\n", "ERRORE\n") + ex.Message);
