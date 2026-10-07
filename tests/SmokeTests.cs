@@ -117,8 +117,106 @@ static class SmokeTests
         Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente/progetto/settings", "Gitea"); }, "Rifiuto della pagina impostazioni Gitea");
         Reject(delegate { GitUploader.ValidateUrl("https://github.com/utente/progetto", "Gitea"); }, "Link GitHub richiede la piattaforma GitHub");
         Reject(delegate { GitUploader.ValidateUrl("https://gitlab.com/utente/progetto", "Gitea"); }, "Link GitLab richiede la piattaforma GitLab");
+        Assert(GitUploader.ValidateUrl("https://git.example.com/team/repo", "Gitea", "31000") == "https://git.example.com:31000/team/repo.git", "Campo porta 31000 aggiunto al link Gitea");
+        Assert(GitUploader.ValidateUrl("https://git.example.com:3443/gitea/team/repo.git", "Gitea", "4443") == "https://git.example.com:4443/gitea/team/repo.git", "Campo porta sostituisce la porta del link senza perdere il percorso");
+        Assert(GitUploader.ValidateUrl("https://git.example.com:3443/team/repo", "Gitea", " ") == "https://git.example.com:3443/team/repo.git", "Porta vuota conserva la porta del link");
+        Assert(GitUploader.ValidateUrl("https://git.example.com:3443/team/repo", "Gitea", "443") == "https://git.example.com/team/repo.git", "Porta HTTPS predefinita");
+        foreach (string port in new [] { "0", "65536", "-1", "abc", "1.5", "999999999999" })
+            Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/team/repo", "Gitea", port); }, "Rifiuto porta non valida: " + port);
+        Assert(GitUploader.ValidateUrl("https://git.example.com/team/repo", "Gitea", "65535").Contains(":65535/"), "Porta massima valida");
+        TestBranchUploads(root);
         RenderUI(root);
         Console.WriteLine("TUTTE LE PROVE SUPERATE");
+    }
+    static void TestBranchUploads(string root)
+    {
+        var git = new GitUploader(GitUploader.FindGit(), delegate(string text) {});
+        string remote = Path.Combine(root, "branch-remote.git");
+        string project = Path.Combine(root, "branch-project");
+        Directory.CreateDirectory(remote);
+        Directory.CreateDirectory(project);
+        Must(git, remote, "init", "--bare");
+        File.WriteAllText(Path.Combine(project, "main.txt"), "main baseline");
+        git.First(project, "test", "test@example.com", remote, "Main upload", "main");
+        string mainHead = Must(git, remote, "rev-parse", "main");
+        File.WriteAllText(Path.Combine(project, "main.txt"), "trunk version");
+        git.Update(project, "Create release", "release");
+        Assert(Must(git, remote, "show", "release:main.txt") == "trunk version" && Must(git, remote, "rev-parse", "main") == mainHead, "Trunk1 creato senza modificare main");
+        Assert(Must(git, project, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") == "origin/release", "Nuovo trunk collegato per aggiornamenti successivi");
+        string other = Path.Combine(root, "branch-other");
+        Must(git, root, "clone", "--branch", "release", remote, other);
+        Must(git, other, "config", "user.name", "test-other");
+        Must(git, other, "config", "user.email", "other@example.com");
+        File.WriteAllText(Path.Combine(other, "remote-only.txt"), "remote addition");
+        git.Update(other, "Advance remote release");
+        Must(git, project, "switch", "main");
+        File.WriteAllText(Path.Combine(project, "local-only.txt"), "local addition");
+        git.Update(project, "Use existing release", "release");
+        Assert(Must(git, remote, "show", "release:remote-only.txt") == "remote addition" && Must(git, remote, "show", "release:local-only.txt") == "local addition", "Trunk1 esistente riutilizzato e aggiornato con rebase");
+        string releaseHead = Must(git, remote, "rev-parse", "release");
+        File.WriteAllText(Path.Combine(project, "feature-login.txt"), "second trunk");
+        git.Update(project, "Create feature/login", "feature/login");
+        Assert(Must(git, remote, "show", "feature/login:feature-login.txt") == "second trunk" && Must(git, remote, "rev-parse", "release") == releaseHead, "Branch con slash creato senza modificare release");
+        string firstExisting = Path.Combine(root, "first-existing-trunk");
+        Directory.CreateDirectory(firstExisting);
+        File.WriteAllText(Path.Combine(firstExisting, "first.txt"), "new folder");
+        git.First(firstExisting, "test", "test@example.com", remote, "First on existing trunk", "release");
+        Assert(Must(git, firstExisting, "symbolic-ref", "--short", "HEAD") == "release" && Must(git, remote, "show", "release:first.txt") == "new folder" && Must(git, remote, "show", "release:remote-only.txt") == "remote addition", "Primo caricamento su trunk remoto gia esistente");
+        File.WriteAllText(Path.Combine(other, "remote-bugfix.txt"), "remote third trunk");
+        git.Update(other, "Create remote bugfix", "bugfix");
+        File.WriteAllText(Path.Combine(project, "local-bugfix.txt"), "local third trunk");
+        git.Update(project, "Reuse remote-only bugfix", "bugfix");
+        Assert(Must(git, remote, "show", "bugfix:remote-bugfix.txt") == "remote third trunk" && Must(git, remote, "show", "bugfix:local-bugfix.txt") == "local third trunk", "Trunk esistente solo sul remoto riutilizzato");
+        File.WriteAllText(Path.Combine(project, "main.txt"), "pending changes must survive");
+        Reject(delegate { git.Update(project, "Blocked switch", "main"); }, "Cambio branch bloccato se perderebbe modifiche locali");
+        Assert(File.ReadAllText(Path.Combine(project, "main.txt")) == "pending changes must survive" && Must(git, project, "symbolic-ref", "--short", "HEAD") == "bugfix" && Must(git, remote, "rev-parse", "main") == mainHead, "Cambio bloccato conserva file, branch e main remoto");
+        Must(git, project, "config", "--replace-all", "remote.origin.pushurl", Path.Combine(root, "missing-push.git"));
+        Reject(delegate { git.Update(project, "Retryable new branch", "retry-upload"); }, "Errore push di un nuovo trunk rilevato");
+        Must(git, project, "config", "--replace-all", "remote.origin.pushurl", remote);
+        git.Update(project, "Retry current branch");
+        Assert(Must(git, remote, "show", "retry-upload:main.txt") == "pending changes must survive", "Retry sul branch attuale dopo push fallito di un trunk nuovo");
+        git.Update(project, "Return to main", "main");
+        Assert(Must(git, project, "symbolic-ref", "--short", "HEAD") == "main" && Must(git, remote, "rev-parse", "main") == mainHead, "Main esistente selezionato senza commit vuoto");
+        string fresh = Path.Combine(root, "first-new-trunk");
+        Directory.CreateDirectory(fresh);
+        File.WriteAllText(Path.Combine(fresh, "fresh.txt"), "fresh trunk");
+        git.First(fresh, "test", "test@example.com", remote, "First new trunk", "prototype");
+        Assert(Must(git, fresh, "symbolic-ref", "--short", "HEAD") == "prototype" && Must(git, remote, "show", "prototype:fresh.txt") == "fresh trunk", "Primo caricamento crea il trunk richiesto");
+        string invalid = Path.Combine(root, "invalid-branch-folder");
+        Directory.CreateDirectory(invalid);
+        foreach (string name in new [] { "bad name", "../bad", "-bad", "HEAD", "bad.lock", "bad\nname", "topic@{1}" })
+            Reject(delegate { git.First(invalid, "test", "test@example.com", remote, "Invalid", name); }, "Rifiuto branch non valido prima di modificare la cartella: " + name);
+        Assert(!Directory.Exists(Path.Combine(invalid, ".git")), "Branch invalido senza inizializzare Git");
+        Must(git, remote, "symbolic-ref", "HEAD", "refs/heads/release");
+        Must(git, other, "remote", "set-head", "origin", "release");
+        string[] suggestions = git.SuggestedBranches(other);
+        Assert(suggestions[0] == "release" && Array.IndexOf(suggestions, "main") >= 0 && Array.IndexOf(suggestions, "bugfix") >= 0, "Suggerimenti includono principale, main e branch esistenti");
+        string automatic = Path.Combine(root, "automatic-default-branch");
+        Directory.CreateDirectory(automatic);
+        File.WriteAllText(Path.Combine(automatic, "automatic.txt"), "default branch upload");
+        git.First(automatic, "test", "test@example.com", remote, "Default branch upload", null, true);
+        Assert(Must(git, automatic, "symbolic-ref", "--short", "HEAD") == "release" && Must(git, remote, "show", "release:automatic.txt") == "default branch upload", "Branch principale rilevato dal server con nome diverso da main");
+        git.Update(project, "Use default branch", null, true);
+        Assert(Must(git, project, "symbolic-ref", "--short", "HEAD") == "release", "Branch principale selezionabile negli aggiornamenti");
+        string emptyRemote = Path.Combine(root, "empty-default-remote.git");
+        string emptyProject = Path.Combine(root, "empty-default-project");
+        Directory.CreateDirectory(emptyRemote);
+        Directory.CreateDirectory(emptyProject);
+        Must(git, emptyRemote, "init", "--bare");
+        File.WriteAllText(Path.Combine(emptyProject, "start.txt"), "start");
+        git.First(emptyProject, "test", "test@example.com", emptyRemote, "Default on empty", null, true);
+        Assert(Must(git, emptyRemote, "show", "main:start.txt") == "start", "Branch principale di un repository vuoto usa main");
+        string portProject = Path.Combine(root, "gitea-port-project");
+        Directory.CreateDirectory(portProject);
+        Must(git, portProject, "init", "-b", "main");
+        Must(git, portProject, "remote", "add", "origin", "https://git.example.com/gitea/team/repo.git");
+        git.ConfigureGiteaPort(portProject, "origin", "31000");
+        Assert(git.ConnectedUrl(portProject) == "https://git.example.com:31000/gitea/team/repo.git" && Must(git, portProject, "remote", "get-url", "--push", "origin") == git.ConnectedUrl(portProject), "Porta Gitea salvata per fetch e push negli aggiornamenti");
+        Reject(delegate { git.ConfigureGiteaPort(portProject, "origin", "0"); }, "Porta invalida rifiutata senza cambiare il remote");
+        Assert(git.ConnectedUrl(portProject).Contains(":31000/"), "Remote conservato dopo porta invalida");
+        Must(git, portProject, "remote", "set-url", "origin", "https://github.com/team/repo.git");
+        Reject(delegate { git.ConfigureGiteaPort(portProject, "origin", "31000"); }, "Campo porta Gitea non cambia GitHub");
+        Assert(git.ConnectedUrl(portProject) == "https://github.com/team/repo.git", "Remote GitHub conservato");
     }
     static void RenderUI(string root)
     {
@@ -152,23 +250,41 @@ static class SmokeTests
                 window.Show();
                 Application.DoEvents();
                 window.PerformLayout();
+                Assert(window.BranchSelector.Text == (first ? "main" : ""), "Main predefinito al primo upload, campo vuoto per branch attuale negli aggiornamenti");
+                Assert(window.PortFieldVisible == (first && service == "Gitea"), "Campo porta visibile solo al primo upload Gitea");
+                Assert(window.BranchSelector.DropDownStyle == ComboBoxStyle.DropDown && window.BranchSelector.Items.Contains("main"), "Casella branch modificabile con suggerimenti");
+                window.BranchSelector.Text = "feature/login";
+                window.GiteaPort.Text = "31000";
                 using (var bitmap = new Bitmap(window.Width, window.Height))
                 {
                     window.DrawToBitmap(bitmap, new Rectangle(Point.Empty, window.Size));
                     bitmap.Save(Path.Combine(root, service + "-" + language + (first ? "-first.png" : "-updates.png")));
                 }
+                string uiProject = Path.Combine(root, "ui-project-" + service + "-" + language + "-" + first);
+                Directory.CreateDirectory(uiProject);
+                var uiGit = new GitUploader(GitUploader.FindGit(), delegate(string text) {});
+                Must(uiGit, uiProject, "init", "-b", "main");
+                Must(uiGit, uiProject, "remote", "add", "origin", service == "Gitea" ? "https://git.example.com/team/repo.git" : service == "GitLab" ? "https://gitlab.com/team/repo.git" : "https://github.com/team/repo.git");
+                window.ProjectFolder.Text = uiProject;
+                Assert(window.PortFieldVisible == (service == "Gitea"), "Porta Gitea disponibile al primo e ai successivi caricamenti dopo selezione cartella");
                 Assert(window.FirstFieldsVisible == first, "Campi corretti per la modalita " + language + " " + first);
                 Assert(window.PlatformSelector.SelectedItem.ToString() == service, "Selezione della piattaforma " + service);
                 Assert(window.UploadType.Items[0].ToString() == (language == "it" ? "Primo caricamento" : "First upload"), "Selettore modalita tradotto " + language);
                 window.CommitMessage.Text = "Messaggio personalizzato";
                 window.LanguageSelector.SelectedIndex = language == "it" ? 0 : 1;
+                Assert(window.BranchSelector.Text == "feature/login" && window.GiteaPort.Text == "31000", "Cambio lingua conserva nome branch libero e porta");
                 Assert(window.CommitMessage.Text == "Messaggio personalizzato", "Cambio lingua conserva il messaggio commit");
                 Assert(window.PlatformSelector.SelectedItem.ToString() == service, "Cambio lingua conserva la piattaforma");
                 window.UploadType.SelectedIndex = first ? 1 : 0;
                 window.CommitMessage.Text = "Messaggio altra modalita";
                 window.UploadType.SelectedIndex = first ? 0 : 1;
+                Assert(window.BranchSelector.Text == "feature/login", "Cambio modalita conserva il nome branch libero della modalita");
                 Assert(window.CommitMessage.Text == "Messaggio personalizzato", "Cambio modalita conserva il messaggio commit");
                 Assert(window.PlatformSelector.SelectedItem.ToString() == service, "Cambio modalita conserva la piattaforma");
+                window.LanguageSelector.SelectedIndex = 1;
+                window.BranchSelector.SelectedIndex = 0;
+                window.LanguageSelector.SelectedIndex = 0;
+                Assert(window.BranchSelector.Text == "Default branch", "Suggerimento principale tradotto e conservato");
                 window.LanguageSelector.SelectedIndex = 1;
             }
             using (var reopened = new SetupWindow(new AppSettings(settingsFile)))

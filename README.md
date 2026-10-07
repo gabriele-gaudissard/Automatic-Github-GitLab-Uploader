@@ -10,7 +10,9 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 
 - **First upload:** initialize the repository, configure the commit author, connect to the service, commit, and push.
 - **Subsequent uploads:** select a folder and enter a commit message; the app uses the existing remote connection.
+- **Editable branch field:** choose `main`, the repository's default branch, or an existing branch from the suggestions, or type your own name. Existing branches are reused; missing branches are created.
 - **GitHub, GitLab.com, and Gitea**, including GitLab subgroups and Gitea instances on custom HTTPS domains and ports.
+- **Gitea HTTPS port field:** optionally set a port separately from the repository URL.
 - **Automatic rebase** when remote changes need to be integrated.
 - **English and Italian**, with the selected language remembered after closing the app.
 - **Dark interface**, with readable input fields, dropdown menus, and an activity log.
@@ -46,6 +48,8 @@ Create the repository on your chosen service first. An empty repository is the s
 | Account email | The email address to associate with your commits. |
 | Username / name | Your username or the commit author's name. |
 | Repository link | The repository's HTTPS URL on the selected service. |
+| Gitea HTTPS port | Optional, shown for Gitea only. Enter a number from `1` to `65535`, such as `31000`; leave empty to keep the URL's port, or HTTPS port `443` if none is specified. |
+| Branch | Choose a suggestion, such as `main` or `Default branch`, or type a name such as `release` or `feature/login`. The first-upload default is `main`. |
 | Commit message | A description of the upload; the initial value is `Initial upload`. |
 
 Example repository links:
@@ -61,7 +65,9 @@ Gitea with a URL prefix: https://git.example.com/gitea/team/repository.git
 
 The `.git` suffix is optional for standard repository links. For Gitea installed under a URL prefix, copy the full HTTPS clone URL ending in `.git` from the repository's **Code** menu. Use the repository URL without page paths such as `/tree/main`, `/-/tree/main`, or `/src/branch/main`.
 
-Click **Upload to GitHub**, **Upload to GitLab**, or **Upload to Gitea**. The app creates a `main` branch for a new repository and keeps the current branch for an existing one. Name and email are configured only for the selected folder.
+Click **Upload to GitHub**, **Upload to GitLab**, or **Upload to Gitea**. The app uploads to the selected branch. Name and email are configured only for the selected folder.
+
+The **Gitea HTTPS port** field overrides any port already in the URL. For example, URL `https://git.example.com/team/repo` with port `31000` connects to `https://git.example.com:31000/team/repo.git`. This must be the server's HTTPS port, not its SSH port. The complete URL is saved in the folder's Git remote, so later uploads reuse that port automatically.
 
 ### Subsequent uploads
 
@@ -70,9 +76,23 @@ Click **Upload to GitHub**, **Upload to GitLab**, or **Upload to Gitea**. The ap
 1. Edit your project files.
 2. Select **Subsequent uploads**.
 3. Select the same root folder and enter a message, such as `Fix login form`.
-4. Click **Upload changes**.
+4. Leave **Branch** empty to keep the current branch, choose a suggestion, or type a branch name.
+5. For a linked Gitea repository, optionally set **Gitea HTTPS port**, such as `31000`. The field appears after selecting the folder. Leaving it empty keeps the saved port; entering a number updates the configured fetch and push URLs.
+6. Click **Upload changes**.
 
 You do not need to enter the platform, email, or repository URL again: the app uses the branch's configured remote. If there are no new changes, it skips creating an empty commit and still attempts to synchronize and upload any unpublished local commits.
+
+### Choosing main or your own branch (trunk)
+
+- Click the arrow in the **Branch** field to see clickable suggestions. Choose `main`, `Default branch`, or a branch already known to the local repository. The suggestions include a known default branch even when it has a name other than `main`. Opening the suggestions does not connect to the server.
+- Choose **Default branch** (**Branch principale** in Italian) to look up the remote repository's primary branch when uploading. If the server does not advertise one, including an empty repository, the app uses `main`.
+- Type a name freely, such as `release`, `prova`, or `feature/login`. Numbering and a `trunk` prefix are not required. Names must follow Git's branch naming rules; spaces are not allowed.
+- If the named branch exists locally, the app switches to it. If it exists on the remote, the app integrates remote changes with a rebase before pushing. If it does not exist, it is created and published on the same repository. New branches in an existing repository start from the current local history.
+- Leave the field empty to keep the folder's active branch and, for subsequent uploads, its configured upstream destination. Branch choices are retained separately for the two upload modes during the current session.
+
+Selecting a branch during subsequent uploads targets that branch on the remote configured for the branch you started from. The selected branch stays active after the upload, and its connection is remembered for later uploads. Only the selected remote branch is pushed.
+
+Switching to an existing local branch also loads that branch's committed files. If switching would overwrite uncommitted work, the app stops and Git preserves those changes. Save or reconcile that work before retrying. Rebase conflicts also stop the upload and preserve the local commit.
 
 ## Account sign-in
 
@@ -125,6 +145,9 @@ The app does not automatically choose which version to keep when changes conflic
 | Access is denied | Check your account and repository permissions, then complete sign-in. For Gitea, check that the access token can write to the repository. |
 | The URL is invalid | Use the repository's HTTPS URL. GitHub and GitLab require their public domains; Gitea accepts your instance's domain. With a Gitea URL prefix, use the clone URL ending in `.git`. |
 | Gitea reports a certificate error | Ask the server administrator to provide a valid HTTPS certificate and configure Git to trust the issuing certificate authority if needed. |
+| The port is invalid | Enter a Gitea HTTPS port from `1` to `65535`, or leave the field empty to use the repository URL. |
+| The branch name is invalid | Use a valid Git branch name, such as `release` or `feature/login`. Avoid spaces, `..`, and names beginning with `-`. |
+| Git refuses to switch branches | Read the log and save or reconcile the affected local changes before retrying. |
 | Rebase stopped because of conflicts | Read the file names in the log and reconcile the changes before retrying. |
 | The service rejected the push | Read the Git message: the branch may be protected, your account may lack permission, or additional remote changes may have arrived. |
 
@@ -160,7 +183,7 @@ To build the app and run the checks:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 ```
 
-The checks use local test repositories without publishing files to hosted services. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, URL validation for all three platforms, the Gitea menu in both languages, saved language preferences, and recent-folder persistence and selection. Live authentication and server-specific policies require an account on the chosen service. Test folders are created under `work/`, which is excluded from version control.
+The checks use local test repositories without publishing files to hosted services. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, freely named new and existing branches, remote-only branches, default-branch discovery, editable branch suggestions, safe branch switching, retry after a failed push, Gitea port overrides for first and subsequent uploads, URL validation for all three platforms, both interface languages, saved language preferences, and recent-folder persistence and selection. Live authentication and server-specific policies require an account on the chosen service. Test folders are created under `work/`, which is excluded from version control.
 
 ## Scope of this version
 

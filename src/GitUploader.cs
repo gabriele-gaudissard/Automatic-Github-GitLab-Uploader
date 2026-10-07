@@ -180,8 +180,81 @@ public sealed class GitUploader
             "\n\n" + rebase.Error + "\n" + rebase.Output);
     }
 
-    public void First(string folder, string username, string email, string url, string message)
+    void ValidateBranch(string folder, string branch)
     {
+        if (branch != null && (String.IsNullOrWhiteSpace(branch) || branch.StartsWith("-", StringComparison.Ordinal) ||
+            branch == "HEAD" || branch.Contains("@{") || branch.IndexOfAny(new [] { '\r', '\n', '\0' }) >= 0 ||
+            Run(folder, "check-ref-format", "--branch", branch).Code != 0))
+            throw new InvalidOperationException(T("Enter a valid branch name, such as main, release, or feature/login. Spaces are not allowed.", "Inserisci un nome branch valido, come main, release o feature/login. Gli spazi non sono ammessi."));
+    }
+
+    public string[] SuggestedBranches(string folder)
+    {
+        var suggestions = new List<string>();
+        if (!Directory.Exists(folder)) return new [] { "main" };
+        // Use locally known remote HEADs; opening the menu never starts sign-in.
+        GitResult refs = Run(folder, "for-each-ref", "--format=%(refname)|%(symref)", "refs/remotes/");
+        if (refs.Code == 0)
+            foreach (string line in refs.Output.Split(new [] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] parts = line.Split('|');
+                if (parts.Length == 2 && parts[0].EndsWith("/HEAD", StringComparison.Ordinal) && parts[1].Contains("/"))
+                {
+                    string remoteName = parts[1].Substring("refs/remotes/".Length);
+                    string name = remoteName.Substring(remoteName.IndexOf('/') + 1);
+                    if (!suggestions.Contains(name)) suggestions.Add(name);
+                }
+            }
+        if (!suggestions.Contains("main")) suggestions.Add("main");
+        GitResult local = Run(folder, "for-each-ref", "--format=%(refname:short)", "refs/heads/");
+        if (local.Code == 0)
+            foreach (string name in local.Output.Split(new [] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                if (!suggestions.Contains(name)) suggestions.Add(name);
+        if (refs.Code == 0)
+            foreach (string line in refs.Output.Split(new [] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string name = line.Split('|')[0].Substring("refs/remotes/".Length);
+                if (name.EndsWith("/HEAD", StringComparison.Ordinal) || !name.Contains("/")) continue;
+                name = name.Substring(name.IndexOf('/') + 1);
+                if (!suggestions.Contains(name)) suggestions.Add(name);
+            }
+        return suggestions.ToArray();
+    }
+
+    string DefaultBranch(string folder, string remote)
+    {
+        log(T("Finding the repository's default branch...", "Ricerca del branch principale del repository..."));
+        string result = Check(folder, "ls-remote", "--symref", remote, "HEAD").Output;
+        foreach (string line in result.Split(new [] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            if (line.StartsWith("ref: refs/heads/", StringComparison.Ordinal) && line.EndsWith("\tHEAD", StringComparison.Ordinal))
+            {
+                string name = line.Substring(16, line.Length - 16 - 5);
+                ValidateBranch(folder, name);
+                return name;
+            }
+        log(T("No default branch was advertised; using main.", "Il repository non indica un branch principale; uso main."));
+        return "main";
+    }
+
+    string SelectBranch(string folder, string current, string selected)
+    {
+        if (selected == null || selected == current) return current;
+        log(T("Selecting branch: ", "Selezione del branch: ") + selected);
+        GitResult exists = Run(folder, "show-ref", "--verify", "--quiet", "refs/heads/" + selected);
+        if (exists.Code == 0) Check(folder, "switch", "--no-guess", selected);
+        else if (exists.Code == 1)
+        {
+            if (Run(folder, "rev-parse", "--verify", "HEAD").Code != 0)
+                Check(folder, "symbolic-ref", "HEAD", "refs/heads/" + selected);
+            else Check(folder, "switch", "--no-track", "-c", selected);
+        }
+        else throw new InvalidOperationException(exists.Error);
+        return selected;
+    }
+
+    public void First(string folder, string username, string email, string url, string message, string selectedBranch = null, bool defaultBranch = false)
+    {
+        ValidateBranch(folder, selectedBranch);
         string branch = Prepare(folder, true);
         log(T("Setting name and email for this folder...", "Impostazione di nome ed email per questa cartella..."));
         Check(folder, "config", "--local", "user.name", username);
@@ -192,36 +265,80 @@ public sealed class GitUploader
         else Check(folder, "remote", "add", "origin", url);
         // A previous push URL must not silently send the project somewhere else.
         Check(folder, "config", "--local", "--replace-all", "remote.origin.pushurl", url);
+        if (defaultBranch) selectedBranch = DefaultBranch(folder, "origin");
+        branch = SelectBranch(folder, branch, selectedBranch);
         Commit(folder, message);
         log(T("Connecting to the repository. If asked, complete your account sign-in...", "Connessione al repository. Se richiesto, completa l'accesso al tuo account..."));
         Synchronize(folder, "origin", "refs/heads/" + branch, true);
-        GitResult push = Check(folder, "-c", "remote.origin.mirror=false", "push", "--porcelain", "-u", "origin", branch);
+        GitResult push = Check(folder, "-c", "remote.origin.mirror=false", "push", "--porcelain", "-u", "origin", "HEAD:refs/heads/" + branch);
         if (push.Output.Length > 0) log(push.Output);
         log(T("Upload completed. Branch: ", "Caricamento completato. Branch: ") + branch + ".");
     }
 
-    public void Update(string folder, string message)
+    public string ConnectedUrl(string folder)
     {
+        if (!Directory.Exists(folder)) return null;
+        GitResult branch = Run(folder, "symbolic-ref", "--quiet", "--short", "HEAD");
+        if (branch.Code != 0) return null;
+        GitResult configured = Run(folder, "config", "--get", "branch." + branch.Output + ".remote");
+        string remote = configured.Code == 0 ? configured.Output : "origin";
+        GitResult url = Run(folder, "remote", "get-url", remote);
+        return url.Code == 0 ? url.Output : null;
+    }
+
+    public void ConfigureGiteaPort(string folder, string remote, string port)
+    {
+        if (String.IsNullOrWhiteSpace(port)) return;
+        string fetch = ValidateUrl(Check(folder, "remote", "get-url", remote).Output, "Gitea", port);
+        string[] pushUrls = Check(folder, "remote", "get-url", "--push", "--all", remote).Output.Split(new [] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var pushes = new List<string>();
+        foreach (string url in pushUrls) pushes.Add(ValidateUrl(url, "Gitea", port));
+        // Validate every destination before changing any configuration.
+        Check(folder, "config", "--local", "--replace-all", "remote." + remote + ".url", fetch);
+        Check(folder, "config", "--local", "--replace-all", "remote." + remote + ".pushurl", pushes[0]);
+        for (int index = 1; index < pushes.Count; index++) Check(folder, "config", "--local", "--add", "remote." + remote + ".pushurl", pushes[index]);
+        log(T("Gitea HTTPS port saved: ", "Porta HTTPS Gitea salvata: ") + port.Trim());
+    }
+
+    public void Update(string folder, string message, string selectedBranch = null, bool defaultBranch = false, string giteaPort = null)
+    {
+        ValidateBranch(folder, selectedBranch);
         string branch = Prepare(folder, false);
-        GitResult upstream = Run(folder, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}");
-        if (upstream.Code != 0)
+        GitResult remoteConfig = Run(folder, "config", "--get", "branch." + branch + ".remote");
+        GitResult targetConfig = Run(folder, "config", "--get", "branch." + branch + ".merge");
+        // A new branch's remote tracking ref does not exist until its first
+        // successful push. Its saved destination is sufficient for a retry.
+        if (remoteConfig.Code != 0 || targetConfig.Code != 0)
             throw new InvalidOperationException(T("This branch is not linked to a remote repository yet. Select First upload.", "Questo branch non è ancora collegato a un repository remoto. Seleziona Primo caricamento."));
         GitResult identity = Run(folder, "var", "GIT_AUTHOR_IDENT");
         if (identity.Code != 0) throw new InvalidOperationException(T("Git name or email is missing. Set them using First upload.\n", "Nome o email Git mancanti. Impostali con Primo caricamento.\n") + identity.Error);
-        string remote = Check(folder, "config", "--get", "branch." + branch + ".remote").Output;
-        string target = Check(folder, "config", "--get", "branch." + branch + ".merge").Output;
+        string remote = remoteConfig.Output;
+        string target = targetConfig.Output;
         if (remote == "." || !target.StartsWith("refs/heads/", StringComparison.Ordinal))
             throw new InvalidOperationException(T("The branch is not linked to a valid remote repository.", "Il branch non è collegato a un repository remoto valido."));
+        ConfigureGiteaPort(folder, remote, giteaPort);
+        if (defaultBranch) selectedBranch = DefaultBranch(folder, remote);
+        if (selectedBranch != null)
+        {
+            branch = SelectBranch(folder, branch, selectedBranch);
+            target = "refs/heads/" + branch;
+            // Remember the chosen destination so a failed first push to this
+            // branch can be retried using Current branch.
+            Check(folder, "config", "--local", "branch." + branch + ".remote", remote);
+            Check(folder, "config", "--local", "branch." + branch + ".merge", target);
+        }
         Commit(folder, message);
         log(T("Uploading updates. If asked, complete your account sign-in...", "Caricamento degli aggiornamenti. Se richiesto, completa l'accesso al tuo account..."));
-        Synchronize(folder, remote, target, false);
+        Synchronize(folder, remote, target, true);
         // Explicit refspec ignores custom push.default and pushes only this branch.
-        GitResult push = Check(folder, "-c", "remote." + remote + ".mirror=false", "push", "--porcelain", remote, "HEAD:" + target);
+        GitResult push = selectedBranch == null
+            ? Check(folder, "-c", "remote." + remote + ".mirror=false", "push", "--porcelain", remote, "HEAD:" + target)
+            : Check(folder, "-c", "remote." + remote + ".mirror=false", "push", "--porcelain", "-u", remote, "HEAD:" + target);
         if (push.Output.Length > 0) log(push.Output);
         log(T("Update completed. Branch: ", "Aggiornamento completato. Branch: ") + branch + ".");
     }
 
-    public static string ValidateUrl(string value, string platform = "GitHub")
+    public static string ValidateUrl(string value, string platform = "GitHub", string port = null)
     {
         if (platform != "GitHub" && platform != "GitLab" && platform != "Gitea") throw new ArgumentException("Unsupported platform");
         bool gitea = platform == "Gitea";
@@ -249,7 +366,15 @@ public sealed class GitUploader
         if (platform == "GitHub" && !Regex.IsMatch(segments[0], @"^[A-Za-z0-9-]+$")) valid = false;
         if (!valid)
             throw new InvalidOperationException(T("Use the repository link, without /tree, /settings or other page paths.", "Il link deve indicare il repository, senza pagine /tree, /settings o altri percorsi."));
-        return (gitea ? uri.GetLeftPart(UriPartial.Authority) : "https://" + host) + "/" + path + ".git";
+        string authority = gitea ? uri.GetLeftPart(UriPartial.Authority) : "https://" + host;
+        if (!String.IsNullOrWhiteSpace(port))
+        {
+            int portNumber;
+            if (!gitea || !Regex.IsMatch(port.Trim(), @"^[0-9]+$") || !Int32.TryParse(port.Trim(), out portNumber) || portNumber < 1 || portNumber > 65535)
+                throw new InvalidOperationException(T("Enter a Gitea HTTPS port from 1 to 65535, or leave the field empty to use the repository link's port.", "Inserisci una porta HTTPS Gitea da 1 a 65535, oppure lascia il campo vuoto per usare la porta del link."));
+            authority = new UriBuilder(uri) { Port = portNumber }.Uri.GetLeftPart(UriPartial.Authority);
+        }
+        return authority + "/" + path + ".git";
     }
 }
 

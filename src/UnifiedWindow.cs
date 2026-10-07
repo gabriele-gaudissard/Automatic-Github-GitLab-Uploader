@@ -175,6 +175,10 @@ public sealed class SetupWindow : Form
     readonly ComboBox mode = new DarkComboBox();
     readonly ComboBox language = new DarkComboBox();
     readonly ComboBox platform = new DarkComboBox();
+    readonly ComboBox branchChoice = new DarkComboBox();
+    readonly TextBox giteaPort = new TextBox { MaxLength = 5 };
+    readonly Label branchHint = new Label();
+    readonly Label portHint = new Label();
     readonly TextBox folder = new TextBox();
     readonly TextBox email = new TextBox();
     readonly TextBox username = new TextBox();
@@ -190,12 +194,16 @@ public sealed class SetupWindow : Form
     readonly Label footer = new Label();
     readonly Label modeLabel = new Label();
     readonly Label languageLabel = new Label();
-    readonly Label[] captions = new Label[6];
+    readonly Label[] captions = new Label[8];
     readonly TableLayoutPanel fields = new TableLayoutPanel();
     readonly TableLayoutPanel selectors = new TableLayoutPanel();
     bool busy;
     bool refreshing;
     int activeMode;
+    string firstBranchChoice = "main";
+    string updateBranchChoice = "";
+    string[] branchSuggestions = new [] { "main" };
+    bool updateIsGitea;
     string firstMessage;
     string updateMessage = "";
     string state = "ready";
@@ -204,6 +212,10 @@ public sealed class SetupWindow : Form
     public ComboBox LanguageSelector { get { return language; } }
     public ComboBox PlatformSelector { get { return platform; } }
     public TextBox CommitMessage { get { return message; } }
+    public ComboBox BranchSelector { get { return branchChoice; } }
+    public TextBox GiteaPort { get { return giteaPort; } }
+    public TextBox ProjectFolder { get { return folder; } }
+    public bool PortFieldVisible { get { return fields.RowStyles[5].Height > 0; } }
     public bool FirstFieldsVisible { get { return fields.RowStyles[1].Height > 0; } }
     static string T(string en, string it) { return UiText.Get(en, it); }
 
@@ -214,8 +226,8 @@ public sealed class SetupWindow : Form
         firstMessage = T("Initial upload", "Primo caricamento");
         Text = "Git Repository Uploader";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(820, 720);
-        MinimumSize = new Size(790, 710);
+        ClientSize = new Size(820, 806);
+        MinimumSize = new Size(790, 796);
         Font = new Font("Segoe UI", 10F);
         BackColor = DarkBackground;
         ForeColor = LightText;
@@ -281,7 +293,27 @@ public sealed class SetupWindow : Form
         AddField(2, email);
         AddField(3, username);
         AddField(4, repo);
-        AddField(5, message);
+        var portPanel = new TableLayoutPanel { ColumnCount = 2, Margin = new Padding(0) };
+        portPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        portPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        giteaPort.Dock = portHint.Dock = DockStyle.Fill;
+        portHint.TextAlign = ContentAlignment.MiddleLeft;
+        portHint.Margin = new Padding(10, 0, 0, 0);
+        portPanel.Controls.Add(giteaPort, 0, 0);
+        portPanel.Controls.Add(portHint, 1, 0);
+        AddField(5, portPanel);
+        var branchPanel = new TableLayoutPanel { ColumnCount = 2, Margin = new Padding(0) };
+        branchPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
+        branchPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+        branchChoice.DropDownStyle = ComboBoxStyle.DropDown;
+        branchChoice.Dock = branchHint.Dock = DockStyle.Fill;
+        branchChoice.Margin = new Padding(0, 0, 12, 0);
+        branchHint.TextAlign = ContentAlignment.MiddleLeft;
+        branchHint.Font = new Font("Segoe UI", 9F);
+        branchPanel.Controls.Add(branchChoice, 0, 0);
+        branchPanel.Controls.Add(branchHint, 1, 0);
+        AddField(6, branchPanel);
+        AddField(7, message);
         message.Text = firstMessage;
         layout.Controls.Add(fields, 0, 3);
         upload.BackColor = Accent;
@@ -316,6 +348,19 @@ public sealed class SetupWindow : Form
         note.ForeColor = footer.ForeColor = status.ForeColor = MutedText;
         RefreshText();
         platform.SelectedIndexChanged += delegate { if (!refreshing) RefreshText(); };
+        branchChoice.TextChanged += delegate {
+            if (refreshing) return;
+            string value = branchChoice.Text == T("Default branch", "Branch principale") ? "\0default" : branchChoice.Text;
+            if (activeMode == 0) firstBranchChoice = value;
+            else updateBranchChoice = value;
+        };
+        branchChoice.DropDown += delegate { RefreshBranchSuggestions(); };
+        branchChoice.MouseClick += delegate(object sender, MouseEventArgs e) {
+            if (!busy && e.X < branchChoice.Width - SystemInformation.VerticalScrollBarWidth && !branchChoice.DroppedDown)
+                branchChoice.DroppedDown = true;
+        };
+        folder.Leave += delegate { RefreshBranchSuggestions(); };
+        folder.TextChanged += delegate { if (!busy && !refreshing) RefreshBranchSuggestions(); };
         mode.SelectedIndexChanged += delegate {
             if (refreshing) return;
             if (activeMode == 0) firstMessage = message.Text;
@@ -431,6 +476,38 @@ public sealed class SetupWindow : Form
         fields.Controls.Add(control, 1, row);
     }
 
+    void RefreshBranchSuggestions()
+    {
+        try {
+            var git = new GitUploader(GitUploader.FindGit(), delegate(string text) {});
+            branchSuggestions = git.SuggestedBranches(folder.Text.Trim().Trim('"'));
+            string url = git.ConnectedUrl(folder.Text.Trim().Trim('"'));
+            updateIsGitea = false;
+            if (url != null) {
+                try { GitUploader.ValidateUrl(url, "Gitea"); updateIsGitea = true; }
+                catch (InvalidOperationException) { }
+            }
+        }
+        catch { branchSuggestions = new [] { "main" }; updateIsGitea = false; }
+        bool previous = refreshing;
+        refreshing = true;
+        string typedBranch = branchChoice.Text;
+        branchChoice.Items.Clear();
+        branchChoice.Items.Add(T("Default branch", "Branch principale"));
+        foreach (string name in branchSuggestions) branchChoice.Items.Add(name);
+        branchChoice.Text = typedBranch;
+        RefreshPortVisibility();
+        refreshing = previous;
+    }
+
+    void RefreshPortVisibility()
+    {
+        bool showPort = activeMode == 0 ? platform.SelectedItem.ToString() == "Gitea" : updateIsGitea;
+        fields.RowStyles[5].Height = showPort ? 43 : 0;
+        fields.GetControlFromPosition(0, 5).Visible = showPort;
+        fields.GetControlFromPosition(1, 5).Visible = showPort;
+    }
+
     void RefreshText()
     {
         refreshing = true;
@@ -456,13 +533,23 @@ public sealed class SetupWindow : Form
         captions[2].Text = T("Account email", "Email account");
         captions[3].Text = T("Username / name", "Username / nome");
         captions[4].Text = T("Repository link", "Link repository");
-        captions[5].Text = T("Commit message", "Nome commit");
+        captions[5].Text = T("Gitea HTTPS port", "Porta HTTPS Gitea");
+        captions[6].Text = T("Branch", "Branch");
+        captions[7].Text = T("Commit message", "Nome commit");
+        branchHint.Text = first ? T("Type a name or choose a suggestion.", "Scrivi un nome o scegli un suggerimento.") : T("Empty: current branch. Type or choose.", "Vuoto: branch attuale. Scrivi o scegli.");
+        portHint.Text = T("Optional: empty uses the link's port (HTTPS default: 443).", "Facoltativa: vuota usa la porta del link (HTTPS: 443).");
+        branchChoice.Items.Clear();
+        branchChoice.Items.Add(T("Default branch", "Branch principale"));
+        foreach (string name in branchSuggestions) branchChoice.Items.Add(name);
+        string branchText = first ? firstBranchChoice : updateBranchChoice;
+        branchChoice.Text = branchText == "\0default" ? T("Default branch", "Branch principale") : branchText;
         for (int row = 1; row <= 4; row++)
         {
             fields.RowStyles[row].Height = first ? 43 : 0;
             fields.GetControlFromPosition(0, row).Visible = first;
             fields.GetControlFromPosition(1, row).Visible = first;
         }
+        RefreshPortVisibility();
         browse.Text = T("Browse…", "Sfoglia…");
         upload.Text = first ? T("Upload to ", "Carica su ") + service : T("Upload changes", "Carica aggiornamenti");
         footer.Text = T("Automatic rebase when needed · Language preference saved", "Rebase automatico se necessario · Preferenza lingua salvata");
@@ -496,6 +583,8 @@ public sealed class SetupWindow : Form
             string commit = message.Text.Trim();
             if (commit.Length == 0) throw new InvalidOperationException(T("Enter a commit message.", "Scrivi il nome del commit."));
             bool first = activeMode == 0;
+            bool defaultBranch = branchChoice.SelectedIndex == 0;
+            string selectedBranch = defaultBranch || String.IsNullOrWhiteSpace(branchChoice.Text) ? null : branchChoice.Text.Trim();
             string user = username.Text.Trim();
             string mail = email.Text.Trim();
             string url = "";
@@ -504,9 +593,10 @@ public sealed class SetupWindow : Form
                 if (user.Length == 0 || user.IndexOfAny(new [] { '\r', '\n', '\0' }) >= 0) throw new InvalidOperationException(T("Enter your username or commit author name.", "Inserisci il tuo username o il nome autore dei commit."));
                 try { var address = new System.Net.Mail.MailAddress(mail); if (address.Address != mail) throw new FormatException(); }
                 catch { throw new InvalidOperationException(T("Enter a valid email address.", "Inserisci un indirizzo email valido.")); }
-                url = GitUploader.ValidateUrl(repo.Text, platform.SelectedItem.ToString());
+                url = GitUploader.ValidateUrl(repo.Text, platform.SelectedItem.ToString(), platform.SelectedItem.ToString() == "Gitea" ? giteaPort.Text : null);
             }
             string git = GitUploader.FindGit();
+            string updatePort = !first && updateIsGitea ? giteaPort.Text : null;
             busy = true;
             fields.Enabled = selectors.Enabled = upload.Enabled = false;
             output.Clear();
@@ -516,8 +606,8 @@ public sealed class SetupWindow : Form
             Log(T("Folder: ", "Cartella: ") + selected);
             var uploader = new GitUploader(git, Log);
             await Task.Run(delegate {
-                if (first) uploader.First(selected, user, mail, url, commit);
-                else uploader.Update(selected, commit);
+                if (first) uploader.First(selected, user, mail, url, commit, selectedBranch, defaultBranch);
+                else uploader.Update(selected, commit, selectedBranch, defaultBranch, updatePort);
             });
             try { settings.RememberUploadedFolder(selected); }
             catch (Exception ex) {
