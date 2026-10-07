@@ -104,6 +104,19 @@ static class SmokeTests
         Reject(delegate { GitUploader.ValidateUrl("https://github.com/utente/progetto/tree/main"); }, "Rifiuto dei link a pagine interne");
         Reject(delegate { GitUploader.ValidateUrl("https://utente:password@github.com/utente/progetto"); }, "Rifiuto di credenziali nel link");
         Reject(delegate { GitUploader.ValidateUrl("https://example.com/utente/progetto"); }, "Controllo del dominio GitHub");
+        Assert(GitUploader.ValidateUrl("https://gitea.com/utente/progetto", "Gitea") == "https://gitea.com/utente/progetto.git", "Link Gitea normalizzato");
+        Assert(GitUploader.ValidateUrl("https://git.example.com:3443/team/progetto.git/", "Gitea") == "https://git.example.com:3443/team/progetto.git", "Dominio e porta HTTPS personalizzati Gitea");
+        Assert(GitUploader.ValidateUrl("https://git.example.com/gitea/team/progetto.git", "Gitea") == "https://git.example.com/gitea/team/progetto.git", "Gitea ospitato con prefisso nel percorso");
+        Assert(GitUploader.ValidateUrl("https://192.168.1.25/team/progetto", "Gitea") == "https://192.168.1.25/team/progetto.git", "Gitea su indirizzo di rete locale");
+        Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente", "Gitea"); }, "Rifiuto del solo profilo Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("http://git.example.com/utente/progetto", "Gitea"); }, "Gitea richiede HTTPS");
+        Reject(delegate { GitUploader.ValidateUrl("https://utente:segreto@git.example.com/utente/progetto", "Gitea"); }, "Nessuna credenziale nel link Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente/progetto?token=segreto", "Gitea"); }, "Nessun token nei parametri Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente/progetto#readme", "Gitea"); }, "Rifiuto di frammenti nel link Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente/progetto/src/branch/main", "Gitea"); }, "Rifiuto delle pagine interne Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("https://git.example.com/utente/progetto/settings", "Gitea"); }, "Rifiuto della pagina impostazioni Gitea");
+        Reject(delegate { GitUploader.ValidateUrl("https://github.com/utente/progetto", "Gitea"); }, "Link GitHub richiede la piattaforma GitHub");
+        Reject(delegate { GitUploader.ValidateUrl("https://gitlab.com/utente/progetto", "Gitea"); }, "Link GitLab richiede la piattaforma GitLab");
         RenderUI(root);
         Console.WriteLine("TUTTE LE PROVE SUPERATE");
     }
@@ -122,7 +135,7 @@ static class SmokeTests
         File.WriteAllText(persistenceFile, "invalid");
         Assert(preferences.LoadLanguage() == "en", "Preferenza non valida: ritorno all'inglese");
         foreach (string language in new [] { "en", "it" })
-        foreach (string service in new [] { "GitHub", "GitLab" })
+        foreach (string service in new [] { "GitHub", "GitLab", "Gitea" })
         foreach (bool first in new [] { true, false })
         {
             string settingsFile = Path.Combine(root, "ui-" + service + "-" + language + "-" + first + ".txt");
@@ -131,7 +144,7 @@ static class SmokeTests
                 Assert(window.LanguageSelector.SelectedIndex == 0, "Avvio in inglese " + language + " " + first);
                 window.LanguageSelector.SelectedIndex = language == "it" ? 1 : 0;
                 Assert(window.PlatformSelector.SelectedItem.ToString() == "GitHub", "GitHub predefinito nel menu piattaforma");
-                window.PlatformSelector.SelectedIndex = service == "GitLab" ? 1 : 0;
+                window.PlatformSelector.SelectedItem = service;
                 window.UploadType.SelectedIndex = first ? 0 : 1;
                 window.StartPosition = FormStartPosition.Manual;
                 window.Location = new Point(-32000, -32000);

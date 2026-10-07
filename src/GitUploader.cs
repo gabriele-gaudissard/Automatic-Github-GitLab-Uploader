@@ -193,7 +193,7 @@ public sealed class GitUploader
         // A previous push URL must not silently send the project somewhere else.
         Check(folder, "config", "--local", "--replace-all", "remote.origin.pushurl", url);
         Commit(folder, message);
-        log(T("Connecting to the repository. If asked to sign in, complete it in your browser...", "Connessione al repository. Se appare la richiesta di accesso, completala nel browser..."));
+        log(T("Connecting to the repository. If asked, complete your account sign-in...", "Connessione al repository. Se richiesto, completa l'accesso al tuo account..."));
         Synchronize(folder, "origin", "refs/heads/" + branch, true);
         GitResult push = Check(folder, "-c", "remote.origin.mirror=false", "push", "--porcelain", "-u", "origin", branch);
         if (push.Output.Length > 0) log(push.Output);
@@ -223,24 +223,33 @@ public sealed class GitUploader
 
     public static string ValidateUrl(string value, string platform = "GitHub")
     {
-        if (platform != "GitHub" && platform != "GitLab") throw new ArgumentException("Unsupported platform");
-        string host = platform == "GitLab" ? "gitlab.com" : "github.com";
+        if (platform != "GitHub" && platform != "GitLab" && platform != "Gitea") throw new ArgumentException("Unsupported platform");
+        bool gitea = platform == "Gitea";
+        string host = gitea ? "gitea.example.com" : platform == "GitLab" ? "gitlab.com" : "github.com";
         string example = "https://" + host + "/username/repository";
         Uri uri;
         if (!Uri.TryCreate((value ?? "").Trim(), UriKind.Absolute, out uri) || uri.Scheme != "https" ||
-            !String.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase) ||
-            uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0 || !uri.IsDefaultPort)
+            (!gitea && !String.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase)) ||
+            (gitea && (Uri.CheckHostName(uri.Host) == UriHostNameType.Unknown ||
+                String.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(uri.Host, "gitlab.com", StringComparison.OrdinalIgnoreCase))) ||
+            uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0 || (!gitea && !uri.IsDefaultPort))
             throw new InvalidOperationException(T("Enter the HTTPS repository link for ", "Inserisci il link HTTPS del repository per ") + platform + T(". Example: ", ". Esempio: ") + example);
         string path = uri.AbsolutePath.Trim('/');
-        if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) path = path.Substring(0, path.Length - 4);
+        bool cloneSuffix = path.EndsWith(".git", StringComparison.OrdinalIgnoreCase);
+        if (cloneSuffix) path = path.Substring(0, path.Length - 4);
         string[] segments = path.Split('/');
-        bool valid = segments.Length >= 2 && (platform == "GitLab" || segments.Length == 2);
+        // A Gitea installation may have a URL prefix. Require its clone URL to
+        // distinguish that prefix from an internal repository page.
+        if (gitea && segments.Length > 2 && !cloneSuffix)
+            throw new InvalidOperationException(T("For Gitea hosted under a URL prefix, copy the HTTPS clone link ending in .git from the repository's Code menu.", "Per Gitea con un prefisso nel percorso, copia dal menu Code del repository il link di clonazione HTTPS che termina in .git."));
+        bool valid = segments.Length >= 2 && (platform == "GitLab" || gitea || segments.Length == 2);
         foreach (string segment in segments)
             if (!Regex.IsMatch(segment, platform == "GitLab" ? @"^[A-Za-z0-9_][A-Za-z0-9_.-]*$" : @"^[A-Za-z0-9_.-]+$") || segment == "." || segment == "..") valid = false;
         if (platform == "GitHub" && !Regex.IsMatch(segments[0], @"^[A-Za-z0-9-]+$")) valid = false;
         if (!valid)
             throw new InvalidOperationException(T("Use the repository link, without /tree, /settings or other page paths.", "Il link deve indicare il repository, senza pagine /tree, /settings o altri percorsi."));
-        return "https://" + host + "/" + path + ".git";
+        return (gitea ? uri.GetLeftPart(UriPartial.Authority) : "https://" + host) + "/" + path + ".git";
     }
 }
 

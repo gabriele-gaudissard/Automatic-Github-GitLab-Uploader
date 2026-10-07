@@ -1,16 +1,16 @@
 # Git Repository Uploader
 
-A Windows desktop app for uploading a folder to **GitHub or GitLab**, creating commits, and publishing updates through a simple interface.
+A Windows desktop app for uploading a folder to **GitHub, GitLab, or Gitea**, creating commits, and publishing updates through a simple interface.
 
 Choose an upload type, fill in the fields, and start the upload. The app runs the Git commands and displays the results in its activity log.
 
-![First upload to GitLab](assets/first-upload.png)
+![First upload to Gitea](assets/first-upload.png)
 
 ## Features
 
 - **First upload:** initialize the repository, configure the commit author, connect to the service, commit, and push.
 - **Subsequent uploads:** select a folder and enter a commit message; the app uses the existing remote connection.
-- **GitHub and GitLab.com**, including GitLab groups and subgroups.
+- **GitHub, GitLab.com, and Gitea**, including GitLab subgroups and Gitea instances on custom HTTPS domains and ports.
 - **Automatic rebase** when remote changes need to be integrated.
 - **English and Italian**, with the selected language remembered after closing the app.
 - **Dark interface**, with readable input fields, dropdown menus, and an activity log.
@@ -20,7 +20,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 ## Requirements
 
 - Windows 10 or Windows 11 with .NET Framework 4.8 or later.
-- [Git for Windows](https://git-scm.com/download/win), with Git Credential Manager enabled for browser sign-in.
+- [Git for Windows](https://git-scm.com/download/win), with Git Credential Manager enabled for account sign-in.
 - An account on the selected service and an existing repository with write permission.
 - An internet connection for synchronization and uploads.
 
@@ -42,7 +42,7 @@ Create the repository on your chosen service first. An empty repository is the s
 | Field | What to enter |
 | --- | --- |
 | Project folder | The project's root folder, selectable with `Browse…`. |
-| Platform | `GitHub` or `GitLab`. |
+| Platform | `GitHub`, `GitLab`, or `Gitea`. |
 | Account email | The email address to associate with your commits. |
 | Username / name | Your username or the commit author's name. |
 | Repository link | The repository's HTTPS URL on the selected service. |
@@ -54,11 +54,14 @@ Example repository links:
 GitHub: https://github.com/username/repository
 GitLab: https://gitlab.com/username/project
 GitLab with a subgroup: https://gitlab.com/group/subgroup/project
+Gitea: https://gitea.com/username/repository
+Gitea on your own server: https://git.example.com:3443/team/repository.git
+Gitea with a URL prefix: https://git.example.com/gitea/team/repository.git
 ```
 
-The `.git` suffix is optional. Use the repository URL without page paths such as `/tree/main` or `/-/tree/main`.
+The `.git` suffix is optional for standard repository links. For Gitea installed under a URL prefix, copy the full HTTPS clone URL ending in `.git` from the repository's **Code** menu. Use the repository URL without page paths such as `/tree/main`, `/-/tree/main`, or `/src/branch/main`.
 
-Click **Upload to GitHub** or **Upload to GitLab**. The app creates a `main` branch for a new repository and keeps the current branch for an existing one. Name and email are configured only for the selected folder.
+Click **Upload to GitHub**, **Upload to GitLab**, or **Upload to Gitea**. The app creates a `main` branch for a new repository and keeps the current branch for an existing one. Name and email are configured only for the selected folder.
 
 ### Subsequent uploads
 
@@ -75,7 +78,11 @@ You do not need to enter the platform, email, or repository URL again: the app u
 
 The name and email fields identify the commit author. They do not sign you in to your account.
 
-Authentication is handled by Git Credential Manager. Complete any sign-in requests in your browser. For GitLab.com, the app selects browser authentication, supported by the [credential manager](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/gitlab.md). Passwords and tokens are not stored in the app's preferences and should not be included in the repository URL.
+Authentication is handled by Git Credential Manager. Complete the account sign-in window when prompted. For GitHub and GitLab.com, this normally opens your browser. For GitLab.com, the app selects browser authentication, supported by the [credential manager](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/gitlab.md).
+
+For Gitea, enter your account username in the credential manager prompt and use an access token as the password. Generate the token in your Gitea account's **Settings → Applications**, with permission to write to the repository. Gitea requires a token for Git over HTTPS when two-factor authentication is enabled; see the [Gitea authentication documentation](https://docs.gitea.com/usage/user-setting/multi-factor-authentication/). Your instance may also allow an account password when two-factor authentication is disabled.
+
+Passwords and tokens are not stored in the app's preferences and should not be included in the repository URL. Saved credentials are managed by your configured Git credential helper. A self-hosted Gitea server must use HTTPS with a certificate trusted by Git; custom HTTPS ports and URL prefixes are supported. The app does not disable certificate verification or configure the server.
 
 The language preference is stored at:
 
@@ -115,8 +122,9 @@ The app does not automatically choose which version to keep when changes conflic
 | Git is not found | Install Git for Windows and reopen the app. |
 | The folder is not connected to a remote | Use `First upload` first. |
 | A subfolder was selected | Select the root folder shown in the message. |
-| Access is denied | Check the account you are using and its repository permissions, then complete browser sign-in. |
-| The URL is invalid | Check that the domain matches the selected platform and use the repository's HTTPS URL. |
+| Access is denied | Check your account and repository permissions, then complete sign-in. For Gitea, check that the access token can write to the repository. |
+| The URL is invalid | Use the repository's HTTPS URL. GitHub and GitLab require their public domains; Gitea accepts your instance's domain. With a Gitea URL prefix, use the clone URL ending in `.git`. |
+| Gitea reports a certificate error | Ask the server administrator to provide a valid HTTPS certificate and configure Git to trust the issuing certificate authority if needed. |
 | Rebase stopped because of conflicts | Read the file names in the log and reconcile the changes before retrying. |
 | The service rejected the push | Read the Git message: the branch may be protected, your account may lack permission, or additional remote changes may have arrived. |
 
@@ -152,8 +160,8 @@ To build the app and run the checks:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -RunTests
 ```
 
-The checks use local test repositories without publishing files to GitHub or GitLab. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, URL validation, saved language preferences, and recent-folder persistence and selection. Test folders are created under `work/`, which is excluded from version control.
+The checks use local test repositories without publishing files to hosted services. They cover first uploads, updates, deletions, `.gitignore`, rebase, commit preservation after conflicts, URL validation for all three platforms, the Gitea menu in both languages, saved language preferences, and recent-folder persistence and selection. Live authentication and server-specific policies require an account on the chosen service. Test folders are created under `work/`, which is excluded from version control.
 
 ## Scope of this version
 
-The first-upload menu supports HTTPS repositories on **github.com** and **gitlab.com**. The app does not create remote repositories, manage merge requests or pull requests, or resolve conflicts for you. Service rules, including branch protection, still apply.
+The first-upload menu supports HTTPS repositories on **github.com**, **gitlab.com**, and **Gitea instances on public or private hosts**. HTTP and SSH links are not accepted for first uploads. Subsequent uploads use the folder's existing Git remote. The app does not create remote repositories, manage merge requests or pull requests, or resolve conflicts for you. Service rules, including branch protection, still apply.

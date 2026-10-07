@@ -275,7 +275,7 @@ public sealed class SetupWindow : Form
         folderPanel.Controls.Add(browse, 1, 0);
         AddField(0, folderPanel);
         platform.DropDownStyle = ComboBoxStyle.DropDownList;
-        platform.Items.AddRange(new object[] { "GitHub", "GitLab" });
+        platform.Items.AddRange(new object[] { "GitHub", "GitLab", "Gitea" });
         platform.SelectedIndex = 0;
         AddField(1, platform);
         AddField(2, email);
@@ -443,10 +443,13 @@ public sealed class SetupWindow : Form
         mode.Items.AddRange(new object[] { T("First upload", "Primo caricamento"), T("Subsequent uploads", "Caricamenti successivi") });
         mode.SelectedIndex = activeMode;
         string service = platform.SelectedItem.ToString();
-        string example = service == "GitLab" ? "https://gitlab.com/group/subgroup/project" : "https://github.com/username/repository";
+        string example = service == "Gitea" ? "https://gitea.example.com/username/repository" : service == "GitLab" ? "https://gitlab.com/group/subgroup/project" : "https://github.com/username/repository";
+        string signIn = service == "Gitea"
+            ? T("Name/email identify commits; sign in with username and an access token when asked.\nHTTPS example: ", "Nome/email identificano i commit; quando richiesto, accedi con username e token.\nEsempio HTTPS: ")
+            : T("Username and email are used for commits; sign-in is requested separately.\nHTTPS example: ", "Username ed email servono per i commit; l'accesso viene richiesto separatamente.\nEsempio HTTPS: ");
         note.Text = first
             ? T("Select a folder and a repository already created on ", "Seleziona una cartella e un repository già creato su ") + service + ".\n" +
-                T("Username and email are used for commits; sign-in is requested separately.\nHTTPS example: ", "Username ed email servono per i commit; l'accesso viene richiesto separatamente.\nEsempio HTTPS: ") + example
+                signIn + example
             : T("Select the linked folder and enter a commit message.\nThe upload uses the platform already configured for this folder.", "Seleziona la cartella collegata e scrivi il nome del commit.\nIl caricamento usa la piattaforma già configurata per questa cartella.");
         captions[0].Text = T("Project folder", "Cartella progetto");
         captions[1].Text = T("Platform", "Piattaforma");
