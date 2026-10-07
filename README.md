@@ -14,7 +14,7 @@ Choose an upload type, fill in the fields, and start the upload. The app runs th
 - **Automatic rebase** when remote changes need to be integrated.
 - **English and Italian**, with the selected language remembered after closing the app.
 - **Dark interface**, with readable input fields, dropdown menus, and an activity log.
-- **Recent folders** at the top of the Browse window: select any of your last three successfully uploaded projects with one click.
+- **Browse menu** with the original Windows folder dialog and quick access to your last three successfully uploaded projects.
 - Respects **`.gitignore`**, includes file deletions, and preserves local commits when an upload fails.
 
 ## Requirements
@@ -85,9 +85,14 @@ The language preference is stored at:
 
 ### Recent uploads
 
-Click **Browse…** to open the folder selection window. Its top section lists your last **three distinct folders with successful uploads**, newest first. Click a recent folder to select it immediately, or use the folder tree and **Select folder** to choose another project. You can also type a folder path.
+Click **Browse…** to choose between:
 
-![Recent uploaded folders in the folder picker](assets/recent-folders.png)
+- **Open folder…**: opens the standard Windows Explorer folder selection dialog, with an address bar and a **Search** box to find folders quickly. Search within the current location, select the matching folder, and confirm with **Select folder**.
+- **Recents**: shows your last **three distinct folders with successful uploads**, newest first. Click an entry to select that folder immediately.
+
+In Italian, the choices are **Apri cartella…** and **Recenti**. Cancelling the Windows dialog leaves your current folder unchanged.
+
+![Browse menu with Open folder and Recents](assets/recent-folders.png)
 
 The list is remembered after closing the app. Uploading the same folder again moves it to the top. Failed uploads do not add folders to the list, and folders that no longer exist are hidden. Hover over a recent entry to see its full path.
 
@@ -129,6 +134,7 @@ Git Repository Uploader/
 ├── src/
 │   ├── GitUploader.cs
 │   ├── UnifiedWindow.cs
+│   ├── WindowsFolderPicker.cs
 │   └── app.manifest
 └── tests/
     └── SmokeTests.cs

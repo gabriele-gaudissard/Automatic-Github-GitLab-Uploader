@@ -10,7 +10,7 @@ if (-not (Test-Path -LiteralPath $compilerPath)) {
 }
 $sourcePath = Join-Path $PSScriptRoot 'src'
 $commonArguments = @('/nologo', '/utf8output', '/optimize+', '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll', ('/win32manifest:' + (Join-Path $sourcePath 'app.manifest')))
-$sources = @((Join-Path $sourcePath 'GitUploader.cs'), (Join-Path $sourcePath 'UnifiedWindow.cs'))
+$sources = @((Join-Path $sourcePath 'GitUploader.cs'), (Join-Path $sourcePath 'UnifiedWindow.cs'), (Join-Path $sourcePath 'WindowsFolderPicker.cs'))
 $executablePath = Join-Path $PSScriptRoot 'Git Repository Uploader.exe'
 & $compilerPath @commonArguments '/target:winexe' ('/out:' + $executablePath) @sources
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }

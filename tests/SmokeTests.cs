@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 static class SmokeTests
@@ -193,27 +194,54 @@ static class SmokeTests
         File.AppendAllText(Path.Combine(root, "history", "recent-folders.txt"), Environment.NewLine + "relative-path" + Environment.NewLine + "invalid\0path");
         Assert(settings.LoadRecentFolders().Length == 3, "Cronologia corrotta gestita senza errore");
         UiText.Code = "en";
-        using (var picker = new RecentFolderPicker("", settings.LoadRecentFolders()))
+        bool opened = false;
+        string selected = null;
+        using (var menu = new FolderBrowseMenu(settings.LoadRecentFolders(), delegate { opened = true; }, delegate(string folder) { selected = folder; }))
         {
-            picker.StartPosition = FormStartPosition.Manual;
-            picker.Location = new Point(-32000, -32000);
-            picker.ShowInTaskbar = false;
-            picker.Show();
-            Application.DoEvents();
-            using (var image = new Bitmap(picker.Width, picker.Height))
+            menu.CreateControl();
+            menu.Size = menu.GetPreferredSize(Size.Empty);
+            menu.PerformLayout();
+            var recentDropdown = ((ToolStripMenuItem)menu.Items[1]).DropDown;
+            recentDropdown.CreateControl();
+            recentDropdown.Size = recentDropdown.GetPreferredSize(Size.Empty);
+            recentDropdown.PerformLayout();
+            menu.Items[1].Select();
+            using (var image = new Bitmap(menu.Width + recentDropdown.Width, Math.Max(menu.Height, recentDropdown.Height)))
             {
-                picker.DrawToBitmap(image, new Rectangle(Point.Empty, picker.Size));
+                using (var graphics = Graphics.FromImage(image)) graphics.Clear(Color.FromArgb(18, 22, 29));
+                menu.DrawToBitmap(image, new Rectangle(Point.Empty, menu.Size));
+                recentDropdown.DrawToBitmap(image, new Rectangle(new Point(menu.Width, 0), recentDropdown.Size));
                 image.Save(Path.Combine(root, "recent-folders.png"));
             }
-            var first = (Button)picker.Controls.Find("RecentFolder0", true)[0];
+            menu.Items[0].PerformClick();
+            Assert(opened && selected == null, "Apri cartella avvia il selettore senza cambiare la cartella");
+            var recents = (ToolStripMenuItem)menu.Items[1];
+            Assert(recents.DropDownItems.Count == 3, "Menu Recenti con tre cartelle");
+            var first = recents.DropDownItems[0];
             first.PerformClick();
-            Assert(picker.DialogResult == DialogResult.OK && String.Equals(picker.SelectedPath.TrimEnd('\\'), projects[1], StringComparison.OrdinalIgnoreCase), "Selezione recente con un clic");
+            Assert(String.Equals(selected.TrimEnd('\\'), projects[1], StringComparison.OrdinalIgnoreCase), "Selezione recente con un clic");
         }
-        using (var cancelled = new RecentFolderPicker("", settings.LoadRecentFolders()))
+        using (var emptyMenu = new FolderBrowseMenu(new string[0], delegate {}, delegate(string folder) {}))
         {
-            cancelled.DialogResult = DialogResult.Cancel;
-            Assert(cancelled.SelectedPath == null, "Annullamento senza cambiare cartella");
+            var emptyRecents = (ToolStripMenuItem)emptyMenu.Items[1];
+            Assert(emptyRecents.DropDownItems.Count == 1 && !emptyRecents.DropDownItems[0].Enabled, "Menu recenti vuoto con messaggio informativo");
         }
+        UiText.Code = "it";
+        using (var italian = new FolderBrowseMenu(new string[0], delegate {}, delegate(string folder) {}))
+            Assert(italian.Items[0].Text == "Apri cartella…" && italian.Items[1].Text == "Recenti", "Menu Sfoglia tradotto in italiano");
+        UiText.Code = "en";
+        var native = WindowsFolderPicker.CreateDialog(projects[3]);
+        try
+        {
+            uint options;
+            native.GetOptions(out options);
+            Assert((options & 0x20) != 0 && (options & 0x40) != 0, "Selettore Explorer nativo configurato per cartelle");
+            WindowsFolderPicker.IShellItem initial;
+            native.GetFolder(out initial);
+            try { Assert(String.Equals(WindowsFolderPicker.GetPath(initial), projects[3], StringComparison.OrdinalIgnoreCase), "Cartella iniziale del selettore Windows mantenuta"); }
+            finally { Marshal.ReleaseComObject(initial); }
+        }
+        finally { Marshal.ReleaseComObject(native); }
         // Simulate a stale history entry without deleting any project directory.
         File.WriteAllText(Path.Combine(root, "history", "recent-folders.txt"), Path.Combine(root, "missing-project") + Environment.NewLine + projects[3]);
         recent = settings.LoadRecentFolders();

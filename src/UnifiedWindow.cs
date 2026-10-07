@@ -87,140 +87,52 @@ public sealed class AppSettings
     }
 }
 
-public sealed class RecentFolderPicker : Form
+public sealed class FolderBrowseMenu : ContextMenuStrip
 {
-    readonly TextBox path = new TextBox();
-    readonly TreeView tree = new TreeView();
-    readonly ToolTip tips = new ToolTip();
-    public string SelectedPath { get; private set; }
-    static string T(string en, string it) { return UiText.Get(en, it); }
-
-    public RecentFolderPicker(string initialFolder, string[] recentFolders)
+    public FolderBrowseMenu(string[] recentFolders, Action openFolder, Action<string> selectRecent)
     {
-        Text = T("Select project folder", "Seleziona cartella progetto");
-        StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(650, 590);
-        MinimumSize = new Size(550, 520);
         Font = new Font("Segoe UI", 10F);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 6 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, recentFolders.Length == 0 ? 32 : Math.Min(3, recentFolders.Length) * 38));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        Controls.Add(layout);
-        layout.Controls.Add(new Label { Text = T("Recent uploads", "Caricamenti recenti"), Dock = DockStyle.Fill, Font = new Font("Segoe UI", 13F, FontStyle.Bold) }, 0, 0);
-        var recentPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1 };
-        layout.Controls.Add(recentPanel, 0, 1);
+        ForeColor = Color.FromArgb(232, 237, 245);
+        BackColor = Color.FromArgb(28, 34, 44);
+        Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
+        ShowImageMargin = false;
+        var open = new ToolStripMenuItem(UiText.Get("Open folder…", "Apri cartella…")) { Name = "OpenFolder" };
+        open.Click += delegate { openFolder(); };
+        Items.Add(open);
+        var recents = new ToolStripMenuItem(UiText.Get("Recents", "Recenti")) { Name = "RecentFolders" };
+        Items.Add(recents);
+        var dropdown = (ToolStripDropDownMenu)recents.DropDown;
+        dropdown.Renderer = Renderer;
+        dropdown.ShowImageMargin = false;
+        dropdown.Font = Font;
+        dropdown.ForeColor = ForeColor;
+        dropdown.BackColor = BackColor;
         if (recentFolders.Length == 0)
-            recentPanel.Controls.Add(new Label { Text = T("No recent uploads yet.", "Nessun caricamento recente."), Dock = DockStyle.Fill });
+            recents.DropDownItems.Add(new ToolStripMenuItem(UiText.Get("No recent uploads yet", "Nessun caricamento recente")) { Enabled = false });
         for (int index = 0; index < Math.Min(3, recentFolders.Length); index++)
         {
             string recent = recentFolders[index];
-            string display = Path.GetFileName(recent.TrimEnd('\\', '/'));
-            if (display.Length == 0) display = recent;
-            var button = new Button { Name = "RecentFolder" + index, Text = (index + 1) + ".  " + display, Tag = recent, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = new Padding(0, 0, 0, 5) };
-            recentPanel.RowCount = index + 1;
-            recentPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-            recentPanel.Controls.Add(button, 0, index);
-            tips.SetToolTip(button, recent);
-            button.Click += delegate { path.Text = recent; ChooseFolder(); };
+            string name = Path.GetFileName(recent.TrimEnd('\\', '/'));
+            if (name.Length == 0) name = recent;
+            var item = new ToolStripMenuItem((index + 1) + ".  " + name.Replace("&", "&&")) { Name = "RecentFolder" + index, ToolTipText = recent, ForeColor = ForeColor };
+            item.Click += delegate { selectRecent(recent); };
+            recents.DropDownItems.Add(item);
         }
-        layout.Controls.Add(new Label { Text = T("Or choose another folder", "Oppure scegli un'altra cartella"), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 2);
-        tree.Dock = DockStyle.Fill;
-        tree.HideSelection = false;
-        tree.BeforeExpand += delegate(object sender, TreeViewCancelEventArgs e) { LoadChildren(e.Node); };
-        tree.AfterSelect += delegate(object sender, TreeViewEventArgs e) { path.Text = (string)e.Node.Tag; };
-        foreach (DriveInfo drive in DriveInfo.GetDrives()) tree.Nodes.Add(FolderNode(drive.Name));
-        layout.Controls.Add(tree, 0, 3);
-        path.Dock = DockStyle.Fill;
-        path.Margin = new Padding(0, 8, 0, 5);
-        if (Directory.Exists(initialFolder)) path.Text = Path.GetFullPath(initialFolder);
-        layout.Controls.Add(path, 0, 4);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
-        var choose = new Button { Name = "ChooseFolder", Text = T("Select folder", "Seleziona cartella"), Width = 160, Height = 34 };
-        var cancel = new Button { Text = T("Cancel", "Annulla"), Width = 110, Height = 34, DialogResult = DialogResult.Cancel };
-        choose.Click += delegate { ChooseFolder(); };
-        actions.Controls.Add(choose);
-        actions.Controls.Add(cancel);
-        layout.Controls.Add(actions, 0, 5);
-        AcceptButton = choose;
-        CancelButton = cancel;
-        SetupWindow.ApplyDarkTheme(this);
-        Shown += delegate { RevealInitialFolder(); };
+        foreach (ToolStripItem item in Items) item.ForeColor = ForeColor;
     }
+}
 
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        SetupWindow.UseDarkTitleBar(Handle);
-    }
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) tips.Dispose();
-        base.Dispose(disposing);
-    }
-    static TreeNode FolderNode(string folder)
-    {
-        string name = Path.GetFileName(folder.TrimEnd('\\', '/'));
-        var node = new TreeNode(name.Length == 0 ? folder : name) { Tag = folder };
-        node.Nodes.Add(new TreeNode());
-        return node;
-    }
-    static void LoadChildren(TreeNode node)
-    {
-        if (node.Nodes.Count != 1 || node.Nodes[0].Tag != null) return;
-        node.Nodes.Clear();
-        try
-        {
-            string[] children = Directory.GetDirectories((string)node.Tag);
-            Array.Sort(children, StringComparer.CurrentCultureIgnoreCase);
-            foreach (string child in children) node.Nodes.Add(FolderNode(child));
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
-    void RevealInitialFolder()
-    {
-        string initial = path.Text;
-        if (!Directory.Exists(initial)) return;
-        string root = Path.GetPathRoot(initial);
-        TreeNode node = null;
-        foreach (TreeNode candidate in tree.Nodes)
-            if (String.Equals((string)candidate.Tag, root, StringComparison.OrdinalIgnoreCase)) node = candidate;
-        if (node == null) { node = FolderNode(root); tree.Nodes.Add(node); }
-        string remainder = initial.Substring(root.Length).Trim('\\', '/');
-        foreach (string part in remainder.Split(new [] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            LoadChildren(node);
-            node.Expand();
-            TreeNode next = null;
-            foreach (TreeNode child in node.Nodes)
-                if (String.Equals(child.Text, part, StringComparison.OrdinalIgnoreCase)) { next = child; break; }
-            if (next == null) break;
-            node = next;
-        }
-        tree.SelectedNode = node;
-        node.EnsureVisible();
-        path.Text = initial;
-    }
-    void ChooseFolder()
-    {
-        try
-        {
-            string selected = Path.GetFullPath(path.Text.Trim().Trim('"'));
-            if (String.IsNullOrWhiteSpace(path.Text) || !Directory.Exists(selected)) throw new DirectoryNotFoundException();
-            SelectedPath = selected;
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-        catch (Exception ex)
-        {
-            if (!(ex is ArgumentException) && !(ex is IOException) && !(ex is NotSupportedException) && !(ex is UnauthorizedAccessException)) throw;
-            MessageBox.Show(this, T("Select an existing folder.", "Seleziona una cartella esistente."), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-    }
+public sealed class DarkMenuColors : ProfessionalColorTable
+{
+    public override Color ToolStripDropDownBackground { get { return Color.FromArgb(28, 34, 44); } }
+    public override Color ImageMarginGradientBegin { get { return ToolStripDropDownBackground; } }
+    public override Color ImageMarginGradientMiddle { get { return ToolStripDropDownBackground; } }
+    public override Color ImageMarginGradientEnd { get { return ToolStripDropDownBackground; } }
+    public override Color MenuBorder { get { return Color.FromArgb(58, 70, 89); } }
+    public override Color MenuItemBorder { get { return Color.FromArgb(47, 103, 218); } }
+    public override Color MenuItemSelected { get { return MenuItemBorder; } }
+    public override Color MenuItemSelectedGradientBegin { get { return MenuItemBorder; } }
+    public override Color MenuItemSelectedGradientEnd { get { return MenuItemBorder; } }
 }
 
 public sealed class DarkComboBox : ComboBox
@@ -270,6 +182,7 @@ public sealed class SetupWindow : Form
     readonly TextBox message = new TextBox();
     readonly TextBox output = new TextBox();
     readonly Button browse = new Button();
+    FolderBrowseMenu folderMenu;
     readonly Button upload = new Button();
     readonly Label heading = new Label();
     readonly Label note = new Label();
@@ -351,10 +264,12 @@ public sealed class SetupWindow : Form
         browse.Dock = DockStyle.Fill;
         browse.Margin = new Padding(8, 0, 0, 0);
         browse.Click += delegate {
-            using (var dialog = new RecentFolderPicker(folder.Text, settings.LoadRecentFolders()))
-            {
-                if (dialog.ShowDialog(this) == DialogResult.OK) folder.Text = dialog.SelectedPath;
-            }
+            if (folderMenu != null) folderMenu.Dispose();
+            folderMenu = new FolderBrowseMenu(settings.LoadRecentFolders(), OpenFolder, delegate(string recent) {
+                if (Directory.Exists(recent)) folder.Text = recent;
+                else MessageBox.Show(this, T("This folder no longer exists. Choose Open folder to select another one.", "Questa cartella non esiste più. Scegli Apri cartella per selezionarne un'altra."), Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            });
+            folderMenu.Show(browse, new Point(0, browse.Height));
         };
         folderPanel.Controls.Add(folder, 0, 0);
         folderPanel.Controls.Add(browse, 1, 0);
@@ -436,6 +351,25 @@ public sealed class SetupWindow : Form
         UseDarkTitleBar(Handle);
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && folderMenu != null) folderMenu.Dispose();
+        base.Dispose(disposing);
+    }
+
+    void OpenFolder()
+    {
+        try
+        {
+            string selected = WindowsFolderPicker.Show(this, folder.Text);
+            if (selected != null) folder.Text = selected;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, T("The folder selection window could not be opened.\n", "Non è stato possibile aprire la finestra di selezione cartella.\n") + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     public static void UseDarkTitleBar(IntPtr handle)
     {
         int enabled = 1;
@@ -449,7 +383,6 @@ public sealed class SetupWindow : Form
         var text = control as TextBox;
         var combo = control as ComboBox;
         var button = control as Button;
-        var tree = control as TreeView;
         if (text != null)
         {
             text.BackColor = DarkSurface;
@@ -471,13 +404,6 @@ public sealed class SetupWindow : Form
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             };
             combo.HandleCreated += delegate { SetWindowTheme(combo.Handle, "DarkMode_Explorer", null); };
-        }
-        else if (tree != null)
-        {
-            tree.BackColor = DarkSurface;
-            tree.LineColor = DarkBorder;
-            tree.BorderStyle = BorderStyle.FixedSingle;
-            tree.HandleCreated += delegate { SetWindowTheme(tree.Handle, "DarkMode_Explorer", null); };
         }
         else if (button != null)
         {
@@ -622,4 +548,5 @@ static class Program
         Application.Run(new SetupWindow());
     }
 }
+
 
